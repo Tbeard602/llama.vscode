@@ -3,6 +3,7 @@ import { Application } from './application';
 import { Utils } from './utils';
 import { LlamaChatResponse } from "./types";
 import { Chat } from 'openai/resources';
+import { ModelType, PERSISTENCE_KEYS } from './constants';
 
 export class TextEditor {
     private app: Application;
@@ -17,6 +18,7 @@ export class TextEditor {
     private registration: vscode.Disposable | undefined;
     private suggestionUri: vscode.Uri = vscode.Uri.parse("");
     private diffTitle = 'Text Edit Suggestion';
+    private context = ""
 
     constructor(application: Application) {
         this.app = application;
@@ -26,17 +28,220 @@ export class TextEditor {
         vscode.commands.executeCommand('setContext', 'textEditSuggestionVisible', visible);
     }
 
+    private escapeWebviewAttr(value: string): string {
+        return value
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;')
+            .replace(/</g, '&lt;');
+    }
+
+    /**
+     * Multiline instructions (webview); resolves undefined if cancelled or closed.
+     */
+    private showMultilineEditPrompt = (): Promise<string | undefined> => {
+        const title =
+            this.app.configuration.getUiText('How would you like to modify the selected text?') ??
+            'How would you like to modify the selected text?';
+        const placeholder =
+            this.app.configuration.getUiText('Enter your instructions for editing the text...') ??
+            'Enter your instructions for editing the text...';
+        const submitLabel = this.app.configuration.getUiText('Submit') ?? 'Submit';
+        const submitContextLabel = this.app.configuration.getUiText('Submit with .md files context')??'Submit with .md files context';
+        const cancelLabel = this.app.configuration.getUiText('Cancel') ?? 'Cancel';
+        const emptyHint =
+            this.app.configuration.getUiText('Please enter editing instructions.') ??
+            'Please enter editing instructions.';
+
+        return new Promise((resolve) => {
+            let settled = false;
+            const panel = vscode.window.createWebviewPanel(
+                'editWithAiMultilinePrompt',
+                title,
+                { viewColumn: vscode.ViewColumn.Beside, preserveFocus: false },
+                { enableScripts: true }
+            );
+
+            const finish = (value: string | undefined) => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                resolve(value);
+                panel.dispose();
+            };
+
+            const cspSource = panel.webview.cspSource;
+            panel.webview.html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src 'unsafe-inline' ${cspSource};">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 12px;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            font-family: var(--vscode-font-family);
+            font-size: var(--vscode-font-size);
+            color: var(--vscode-foreground);
+            background-color: var(--vscode-editor-background);
+        }
+        label {
+            margin-bottom: 8px;
+        }
+        textarea {
+            flex: 1;
+            min-height: 120px;
+            resize: vertical;
+            padding: 8px;
+            border: 1px solid var(--vscode-input-border);
+            background: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            font-family: var(--vscode-editor-font-family);
+            font-size: var(--vscode-editor-font-size);
+        }
+        textarea:focus {
+            outline: 1px solid var(--vscode-focusBorder);
+        }
+        .actions {
+            margin-top: 12px;
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+        /* DOM order is Submit then Cancel (Tab: textarea → Submit → Cancel); flex order keeps Cancel left, Submit right. */
+        .actions .secondary {
+            order: 1;
+        }
+        .actions .primary {
+            order: 2;
+        }
+        button {
+            padding: 6px 14px;
+            border: none;
+            cursor: pointer;
+            font-size: var(--vscode-font-size);
+        }
+        .primary {
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+        }
+        .primary:hover {
+            background: var(--vscode-button-hoverBackground);
+        }
+        .secondary {
+            background: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+        }
+        .secondary:hover {
+            background: var(--vscode-button-secondaryHoverBackground);
+        }
+    </style>
+</head>
+<body>
+    <label for="prompt">${this.escapeWebviewAttr(title)}</label>
+    <textarea id="prompt" placeholder="${this.escapeWebviewAttr(placeholder)}" autofocus></textarea>
+    <div class="actions">
+        <button type="button" class="primary" id="submit">${this.escapeWebviewAttr(submitLabel)}</button>
+        <button type="button" class="primary" id="submitContext" title="Adds to the context the content of the following files: \n- file from property agent_rules or if empty the file llama-vscode-rules.md (if available) from project root\n- files (if available) from prject root: AGENTS.md, USER.md, SOUL.md">${this.escapeWebviewAttr(submitContextLabel)}</button>
+        <button type="button" class="secondary" id="cancel">${this.escapeWebviewAttr(cancelLabel)}</button>
+    </div>
+    <script>
+        const vscode = acquireVsCodeApi();
+        const ta = document.getElementById('prompt');
+        function focusPrompt() {
+            if (!ta) {
+                return;
+            }
+            ta.focus();
+            const len = ta.value.length;
+            ta.setSelectionRange(len, len);
+        }
+        window.addEventListener('load', focusPrompt);
+        requestAnimationFrame(focusPrompt);
+        setTimeout(focusPrompt, 0);
+        setTimeout(focusPrompt, 100);
+        window.addEventListener('message', (event) => {
+            const data = event.data;
+            if (data && data.command === 'focusPrompt') {
+                focusPrompt();
+            }
+        });
+        document.getElementById('submit').addEventListener('click', () => {
+            vscode.postMessage({ command: 'submit', text: ta.value });
+        });
+        document.getElementById('submitContext').addEventListener('click', () => {
+            vscode.postMessage({ command: 'submitContext', text: ta.value });
+        });
+        document.getElementById('cancel').addEventListener('click', () => {
+            vscode.postMessage({ command: 'cancel' });
+        });
+    </script>
+</body>
+</html>`;
+
+            const requestPromptFocus = () => {
+                void panel.webview.postMessage({ command: 'focusPrompt' });
+            };
+            panel.onDidChangeViewState((e) => {
+                if (e.webviewPanel.visible) {
+                    requestPromptFocus();
+                }
+            });
+            requestPromptFocus();
+            setTimeout(requestPromptFocus, 50);
+            setTimeout(requestPromptFocus, 200);
+
+            panel.webview.onDidReceiveMessage((message) => {
+                if (message.command === 'submit') {
+                    const text = typeof message.text === 'string' ? message.text : '';
+                    if (!text.trim()) {
+                        void vscode.window.showInformationMessage(emptyHint);
+                        return;
+                    }
+                    finish(text);
+                }if (message.command === 'submitContext') {
+                    const text = typeof message.text === 'string' ? message.text : '';
+                    if (!text.trim()) {
+                        void vscode.window.showInformationMessage(emptyHint);
+                        return;
+                    }
+                    this.context = this.app.llamaAgent.getMdFilesContext();
+                    finish(text);
+                } else if (message.command === 'cancel') {
+                    finish(undefined);
+                }
+            });
+
+            panel.onDidDispose(() => {
+                if (!settled) {
+                    settled = true;
+                    resolve(undefined);
+                }
+            });
+        });
+    }
+
     async showEditPrompt(editor: vscode.TextEditor) {
         let chatUrl = this.app.configuration.endpoint_chat
         if (!chatUrl) chatUrl = this.app.configuration.endpoint_tools; 
         let chatModel = this.app.getChatModel();    
         if (!this.app.isChatModelSelected()) chatModel = this.app.getToolsModel();
+        if (!chatModel.endpoint) {
+            await this.app.modelService.selectDefaultModel(ModelType.Chat, PERSISTENCE_KEYS.DEFAULT_CHAT_MODEL);
+            chatModel = this.app.getChatModel();
+        }
         if (chatModel.endpoint) {
             const chatEndpoint = Utils.trimTrailingSlash(chatModel.endpoint)
             chatUrl = chatEndpoint ? chatEndpoint + "/" : "";
         }
         if (!chatUrl) { 
-            await Utils.suggestModelSelection(
+            await this.app.dialogs.suggestModelSelection(
                 "Select a chat or tools model or an env with chat or tools model to edit code with AI.",
                 "After the chat model is loaded, try again using Edit with AI.",
                 "No endpoint for the chat model. Select an env with chat model or enter the endpoint of a running llama.cpp server with chat model in setting endpoint_chat.",
@@ -57,32 +262,22 @@ export class TextEditor {
         this.removedSpaces = result.removedSpaces
         this.selection = selection;
         this.currentEditor = editor;
-
-        // Get context from surrounding code (10 lines before and after)
-        const startLine = Math.max(0, selection.start.line - 10);
-        const endLine = Math.min(editor.document.lineCount - 1, selection.end.line + 10);
-        const contextRange = new vscode.Range(startLine, 0, endLine, editor.document.lineAt(endLine).text.length);
-        const context = editor.document.getText(contextRange);
+        this.context = "";
         
-        // Create and show input box
-        const prompt = await vscode.window.showInputBox({
-            placeHolder: 'Enter your instructions for editing the text...',
-            prompt: 'How would you like to modify the selected text?',
-            ignoreFocusOut: true
-        });
+        const prompt = await this.showMultilineEditPrompt();
 
         if (!prompt) {
             return;
         }
 
-        this.app.statusbar.showThinkingInfo();
+        this.app.statusbar.showTextInfo('Editing...');
         let data: LlamaChatResponse | undefined
         try {
             try {
                 data = await this.app.llamaServer.getChatEditCompletion(
                     prompt,
                     this.selectedText,
-                    context,
+                    this.context,
                     this.app.extraContext.chunks,
                     0
                 );
@@ -107,7 +302,7 @@ export class TextEditor {
             vscode.window.showErrorMessage('Error getting suggestions. Please check if llama.cpp server is running.');
             await this.cleanup();
         } finally {
-            this.app.statusbar.showInfo(undefined);
+            this.app.statusbar.showTextInfo('');
         }
     }
 

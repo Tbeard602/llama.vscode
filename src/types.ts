@@ -1,10 +1,13 @@
+import { CONFIRMATION_STATE, ModelType } from "./constants";
+
 export interface IAddStrategy {
     add(details: ModelTypeDetails): Promise<void>;
 }
 
 export interface ChatMessage {
   role: string; // or just 'string' if you need more roles
-  content: string;
+  content?: string;
+  tools?: any
   tool_call_id?: string
 }
 
@@ -14,6 +17,7 @@ export interface LlamaResponse {
     tokens_cached?: number;
     truncated?: boolean;
     timings?: {
+        cache_n?: number;
         prompt_n?: number;
         prompt_ms?: number;
         prompt_per_second?: number;
@@ -60,6 +64,7 @@ export interface Env {
 export interface Agent {
     name: string,
     description?: string,
+    subagentEnabled?: boolean,
     systemInstruction: string[],
     toolsModel?: LlmModel,
     tools?: string[]
@@ -68,8 +73,14 @@ export interface Agent {
 export interface AgentCommand {
     name: string,
     description?: string,
-    prompt: string[]
-    context?: string[]
+    prompt: string[],
+    context?: string[],
+    noPrompt?: boolean,
+    isScript?: boolean,
+    executePeriodically?: boolean,
+    startTime?: string,
+    period?: number,
+    totalExecutionTimes?: number
 }
 
 export interface chatMessage {
@@ -77,13 +88,27 @@ export interface chatMessage {
     "content": string
 }
 
+export interface TokenDetails {
+    lastReqTokens?: number
+    inputTokens?: number,
+    outputTokens?: number,
+    cachedTokens?: number,
+    price?: number,
+    chatTokens?: number,
+    chatInputTokens?: number,
+    chatOutputTokens?: number,
+    chatCachedTokens?: number,
+    chatPrice?: number
+}
+
 export interface Chat {
     name: string,
     description?: string,
     id: string,
-    messages?: chatMessage[],
+    messages?: ChatMessage[],
     log?: string,
-    defaultAgent?: Agent
+    defaultAgent?: Agent,
+    tokenDetails?: TokenDetails
 }
 
 export interface HuggingfaceFile {
@@ -106,6 +131,7 @@ export interface HuggingfaceModel {
 }
 
 export interface ModelTypeDetails {
+    modelType?: ModelType
     modelsList: LlmModel[]
     modelsListSettingName: string
     newModelPort: number
@@ -116,8 +142,20 @@ export interface ModelTypeDetails {
     shellCmd: (message: string) => void
 }
 
+export interface EventHook{
+    matcher: string
+    script: string
+    timeoutSec?: number
+}
+
+export interface EventResult{
+    stopLoop: boolean
+    continueLoop?: boolean
+    stopTool: boolean
+    resultInfo: string
+}
+
 export interface ContextCustom {
     get_list: string
     get_item_context: string
 }
-

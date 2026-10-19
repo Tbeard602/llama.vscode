@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { vscode } from '../types/vscode';
 
@@ -17,6 +17,52 @@ interface AgentViewProps {
   imagePath: string;
   setContextImage: (imgPath: string) => void;
 }
+
+// Chat display segments. User messages are wrapped in ***...*** markers by the
+// extension (see llama-agent.ts askAgent/inSessionText), everything else is
+// assistant / status content.
+interface ChatSegment {
+  type: 'user' | 'assistant';
+  content: string;
+}
+
+const parseChatSegments = (text: string): ChatSegment[] => {
+  const segments: ChatSegment[] = [];
+  // User messages are wrapped in ***...*** by the extension (llama-agent.ts).
+  // The opening marker always starts at a line boundary and the closing marker
+  // is always followed by a newline, so anchor the match to line boundaries to
+  // avoid treating `***bold italic***` inside AI responses as user messages.
+  const userMessageRegex = /(^|\n)\*\*\*([\s\S]*?)\*\*\*(?=\n|$)/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = userMessageRegex.exec(text)) !== null) {
+    // Keep the leading newline (match[1]) attached to the preceding text.
+    if (match.index > lastIndex) {
+      segments.push({ type: 'assistant', content: text.slice(lastIndex, match.index) + (match[1] || '') });
+    } else {
+      segments.push({ type: 'assistant', content: match[1] || '' });
+    }
+    segments.push({ type: 'user', content: match[2] });
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < text.length) {
+    segments.push({ type: 'assistant', content: text.slice(lastIndex) });
+  }
+  return segments;
+};
+
+// ReactMarkdown's default URL transform strips non-http(s)/mailto protocols.
+// The extension renders "Files changes" entries as markdown links using the
+// `command:` URI scheme (see llama-agent.ts getFileChangeLink), so we must
+// keep those links intact to make them clickable. Everything else keeps the
+// default safe behavior.
+const markdownUrlTransform = (url: string, key: string, node: any): string => {
+  if (url.startsWith('command:')) {
+    return url;
+  }
+  return defaultUrlTransform(url);
+};
 
 const AgentView: React.FC<AgentViewProps> = ({
   displayText,
@@ -36,6 +82,19 @@ const AgentView: React.FC<AgentViewProps> = ({
   const [fileList, setFileList] = useState<string[]>([]);
   const [fileFilter, setFileFilter] = useState<string>('');
   const [selectedIndex, setSelectedIndex] = useState<number>(0);
+  const [isDragOver, setIsDragOver] = useState<boolean>(false);
+
+  // Request stats state
+  const [lastRequestTokens, setLastRequestTokens] = useState<number>(0);
+  const [lastRequestInputTokens, setLastRequestInputTokens] = useState<number>(0);
+  const [lastRequestOutputTokens, setLastRequestOutputTokens] = useState<number>(0);
+  const [lastRequestCachedTokens, setLastRequestCachedTokens] = useState<number>(0);
+  const [lastRequestPrice, setLastRequestPrice] = useState<number>(0);
+  const [chatTotalTokens, setChatTotalTokens] = useState<number>(0);
+  const [chatInputTokens, setChatInputTokens] = useState<number>(0);
+  const [chatOutputTokens, setChatOutputTokens] = useState<number>(0);
+  const [chatCachedTokens, setChatCachedTokens] = useState<number>(0);
+  const [chatPrice, setChatPrice] = useState<number>(0);
 
   // Create refs
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -102,6 +161,9 @@ const AgentView: React.FC<AgentViewProps> = ({
           if (textareaRef.current) {
             textareaRef.current.focus();
           }
+          if (message.text) {
+            setInputText(message.text);
+          }
           break;
         case 'updateCurrentState':
           setCurrentState(message.text || '');
@@ -115,6 +177,18 @@ const AgentView: React.FC<AgentViewProps> = ({
           break;
         case 'updateContextImage':
           setContextImage(message.image || "");
+          break;
+        case 'updateRquestsStats':
+          setLastRequestTokens(message.totalTokens || 0);
+          setLastRequestInputTokens(message.inputTokens || 0);
+          setLastRequestOutputTokens(message.outputTokens || 0);
+          setLastRequestCachedTokens(message.cachedTokens || 0);
+          setLastRequestPrice(message.price || 0);
+          setChatTotalTokens(message.chatTotalTokens || 0);
+          setChatInputTokens(message.chatInputTokens || 0);
+          setChatOutputTokens(message.chatOutputTokens || 0);
+          setChatCachedTokens(message.chatCachedTokens || 0);
+          setChatPrice(message.chatPrice || 0);
           break;
         default:
           break;
@@ -141,10 +215,17 @@ const AgentView: React.FC<AgentViewProps> = ({
   const handleSendText = () => {
     if (inputText.trim()) {
       // Send text to the extension
-      vscode.postMessage({
-        command: 'sendText',
-        text: inputText
-      });
+      if (currentState.includes('working')){
+        vscode.postMessage({
+          command: 'sendInSessionText',
+          text: inputText
+        });
+      } else {
+        vscode.postMessage({
+          command: 'sendText',
+          text: inputText
+        });
+      }
       setInputText('');
       setCurrentState('AI is working...');
     }
@@ -153,6 +234,201 @@ const AgentView: React.FC<AgentViewProps> = ({
   const handleAddFileSource = () => {
     handleAddSource('getFileList');
   }
+
+  const handleSingleFileDrop = (filePath: string, fileName: string) => {
+    console.log('handleSingleFileDrop called with:', { filePath, fileName });
+    const ext = '.' + fileName.split('.').pop()?.toLowerCase();
+    
+    // Only process text-based files that VS Code can open
+    const allowedExtensions = [
+      '.ts', '.tsx', '.js', '.jsx', '.py', '.java', '.cpp', '.c', '.h', '.hpp', 
+      '.rs', '.go', '.rb', '.css', '.html', '.json', '.xml', '.md', '.txt', 
+      '.sh', '.bat', '.ps1', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf',
+      '.sql', '.graphql', '.vue', '.svelte', '.astro', '.php', '.swift', '.kt',
+      '.scala', '.dart', '.lua', '.r', '.m', '.mm', '.zig', '.nim', '.v',
+    ];
+    
+    if (ext && allowedExtensions.includes(ext)) {
+      console.log('Adding file to context:', fileName);
+      vscode.postMessage({
+        command: 'addContextDroppedFile',
+        filePath: filePath,
+        fileName: fileName
+      });
+    } else {
+      console.warn(`File type "${ext}" is not supported for drag & drop`);
+    }
+  };
+
+  // Extract a clean file system path + name from a URI string or plain path.
+  // Returns null when the value cannot be turned into a usable file path.
+  const extractFileInfo = (rawValue: string): { filePath: string; fileName: string } | null => {
+    const value = rawValue.trim();
+    if (!value) return null;
+
+    let filePath = '';
+
+    if (value.startsWith('file://')) {
+      try {
+        const url = new URL(value);
+        filePath = decodeURIComponent(url.pathname);
+        // On Windows a file URI looks like file:///C:/path -> /C:/path, strip the leading slash
+        if (/^\/[a-zA-Z]:\//.test(filePath)) {
+          filePath = filePath.substring(1);
+        }
+      } catch (err) {
+        console.error('Failed to parse file URI:', value, err);
+        return null;
+      }
+    } else if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(value)) {
+      // Some other scheme (vscode-remote://, untitled:, etc.) - not a local file we can open.
+      console.warn('Skipping non-file URI:', value);
+      return null;
+    } else {
+      // Assume it is already a plain file system path
+      filePath = value;
+    }
+
+    const fileName = filePath.split('/').pop() || filePath.split('\\').pop() || '';
+    if (!fileName) return null;
+
+    return { filePath, fileName };
+  };
+
+  const handleFilesDrop = (dataTransfer: DataTransfer) => {
+    console.log('handleFilesDrop called');
+    console.log('dataTransfer.types:', Array.from(dataTransfer.types));
+    if (dataTransfer.items) {
+      for (let i = 0; i < dataTransfer.items.length; i++) {
+        const it = dataTransfer.items[i];
+        console.log(`  item[${i}] kind=${it.kind} type=${it.type}`);
+      }
+    }
+
+    // Use a Map keyed by file path to avoid adding the same file multiple times
+    const droppedFiles = new Map<string, string>();
+
+    const addFromString = (raw: string, source: string) => {
+      if (!raw) return;
+      const trimmedRaw = raw.trim();
+
+      // VS Code tree drag format: a JSON array of items such as
+      // [{"id":"file:///path/to/file","type":"file", ...}]
+      if (trimmedRaw.startsWith('[') || trimmedRaw.startsWith('{')) {
+        try {
+          const parsed = JSON.parse(trimmedRaw);
+          const entries = Array.isArray(parsed) ? parsed : [parsed];
+          let handled = false;
+          for (const entry of entries) {
+            const candidate = entry?.id ?? entry?.uri ?? entry?.fsPath ?? entry?.path;
+            if (typeof candidate === 'string') {
+              const info = extractFileInfo(candidate);
+              if (info) {
+                console.log(`Dropped file from ${source}:`, info);
+                droppedFiles.set(info.filePath, info.fileName);
+                handled = true;
+              }
+            }
+          }
+          if (handled) return;
+          // Not a recognized tree payload - fall through to line splitting
+        } catch {
+          // Not JSON - fall through to line splitting
+        }
+      }
+
+      // A single payload may contain several URIs separated by newlines
+      const parts = raw.split(/\r?\n/);
+      for (const part of parts) {
+        const trimmed = part.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue; // skip comments / blanks
+        const info = extractFileInfo(trimmed);
+        if (info) {
+          console.log(`Dropped file from ${source}:`, info);
+          droppedFiles.set(info.filePath, info.fileName);
+        }
+      }
+    };
+
+    // Capture OS file drops synchronously. The DataTransfer object becomes
+    // invalid after the drop handler returns, so files must be read now.
+    if (dataTransfer.files && dataTransfer.files.length > 0) {
+      console.log('Processing files from dataTransfer.files');
+      for (let i = 0; i < dataTransfer.files.length; i++) {
+        const file = dataTransfer.files[i];
+        const filePath = (file as any).fullPath || (file as any).path || '';
+        if (filePath) droppedFiles.set(filePath, file.name);
+      }
+    }
+
+    // Synchronous getData fallbacks (text/uri-list, VS Code tree types, text/plain)
+    const collectViaGetData = () => {
+      const candidateTypes = new Set<string>([
+        'text/uri-list',
+        'text/plain',
+      ]);
+      // VS Code tree views expose data under a dynamic
+      // application/vnd.code.tree.<viewId> MIME type - include all present.
+      for (const type of Array.from(dataTransfer.types)) {
+        if (type.startsWith('application/vnd.code.tree.')) {
+          candidateTypes.add(type);
+        }
+      }
+      for (const type of candidateTypes) {
+        try {
+          const data = dataTransfer.getData(type);
+          if (data) addFromString(data, `getData(${type})`);
+        } catch (err) {
+          console.error('getData failed for type', type, err);
+        }
+      }
+    };
+
+    const flush = () => {
+      console.log('Total dropped files collected:', droppedFiles.size);
+      for (const [filePath, fileName] of droppedFiles.entries()) {
+        handleSingleFileDrop(filePath, fileName);
+      }
+    };
+
+    // VS Code exposes dragged explorer files as string items (text/uri-list
+    // and/or a custom application/vnd.code.tree.* type), NOT as file items.
+    // getAsString is asynchronous, so gather them and flush once complete.
+    const stringItems: DataTransferItem[] = [];
+    if (dataTransfer.items) {
+      for (let i = 0; i < dataTransfer.items.length; i++) {
+        const item = dataTransfer.items[i];
+        if (item.kind === 'string') stringItems.push(item);
+      }
+    }
+
+    if (stringItems.length === 0) {
+      collectViaGetData();
+      flush();
+      return;
+    }
+
+    let pending = stringItems.length;
+    const onStringRead = () => {
+      pending--;
+      if (pending === 0) flush();
+    };
+
+    // getData works synchronously during the drop event - do it first.
+    collectViaGetData();
+
+    for (const item of stringItems) {
+      try {
+        item.getAsString((str) => {
+          addFromString(str, `item(${item.type})`);
+          onStringRead();
+        });
+      } catch (err) {
+        console.error('getAsString failed for item', item.type, err);
+        onStringRead();
+      }
+    }
+  };
 
   const handleAddImage = () => {
     vscode.postMessage({
@@ -208,6 +484,12 @@ const AgentView: React.FC<AgentViewProps> = ({
   const handleChatsHistory = () => {
     vscode.postMessage({
       command: 'showChatsHistory'
+    });
+  };
+
+  const handleDeleteCurrentChat = () => {
+    vscode.postMessage({
+      command: 'deleteCurrentChat'
     });
   };
 
@@ -342,7 +624,34 @@ const AgentView: React.FC<AgentViewProps> = ({
   };
 
     return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <div
+      style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragOver(true);
+      }}
+      onDragLeave={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        // Only clear if we're actually leaving the whole view
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+          setIsDragOver(false);
+        }
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragOver(false);
+
+        console.log('=== DROP EVENT TRIGGERED ===');
+        const dataTransfer = e.dataTransfer;
+        console.log('dataTransfer.files:', dataTransfer.files?.length || 0);
+        console.log('dataTransfer.types:', Array.from(dataTransfer.types));
+
+        handleFilesDrop(dataTransfer);
+      }}
+    >
       {/* Modern Header */}
       <div className="header">
         <div className="header-content">
@@ -361,6 +670,13 @@ const AgentView: React.FC<AgentViewProps> = ({
                 title="View Chats History And Load Old Chats"
               >
                 Chats History
+              </button>
+              <button
+                onClick={handleDeleteCurrentChat}
+                className="header-btn secondary"
+                title="Delete This Chat"
+              >
+                🗑️
               </button>
 
               <button
@@ -397,14 +713,24 @@ const AgentView: React.FC<AgentViewProps> = ({
            {displayText && (
              <div className="markdown-container" ref={markdownContainerRef} style={{ flex: 1, minHeight: 0, maxHeight: '50vh' }}>
                <div className="markdown-content" style={{ height: '100%', overflowY: 'auto' }}>
-                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayText}</ReactMarkdown>
+                 {parseChatSegments(displayText).map((segment, index) =>
+                   segment.type === 'user' ? (
+                     <div key={index} className="user-message-bubble">
+                       <ReactMarkdown className="markdown-content-inner" remarkPlugins={[remarkGfm]} urlTransform={markdownUrlTransform}>{segment.content}</ReactMarkdown>
+                     </div>
+                   ) : (
+                     <ReactMarkdown key={index} remarkPlugins={[remarkGfm]} urlTransform={markdownUrlTransform}>{segment.content}</ReactMarkdown>
+                   )
+                 )}
                </div>
              </div>
            )}
 
            {/* Input Section - Moved to bottom */}
            <div className="input-section" style={{ flexShrink: 0 }}>
-            <div className="input-container">
+            <div 
+              className={`input-container ${isDragOver ? 'drag-over' : ''}`}
+            >
               {/* Context Files */}
               {contextFiles.size > 0 && (
                 <div className="context-chips">
@@ -413,6 +739,7 @@ const AgentView: React.FC<AgentViewProps> = ({
                       <span
                         className="file-name clickable"
                         onClick={() => handleOpenContextFile(longName)}
+                        title={`Show ${shortName}`}
                       >
                         {shortName}
                       </span>
@@ -446,7 +773,7 @@ const AgentView: React.FC<AgentViewProps> = ({
                 ref={textareaRef}
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
-                placeholder="Ask me anything about your code... Press @ to select a file, / for a command."
+                placeholder="Ask me anything about your code... Press @ to select a file, / for a command. Drag & drop files (hold Shift while dropping)."
                 className="modern-textarea"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
@@ -472,6 +799,30 @@ const AgentView: React.FC<AgentViewProps> = ({
                   <div className={`status-indicator ${currentState.includes('working') ? 'working' : ''}`}></div>
                   <span>{currentState || 'Ready'}</span>
                 </div>
+                {(lastRequestTokens > 0 || chatTotalTokens > 0) && (
+                  <div className="status-item" style={{ fontSize: '12px', opacity: 0.8, flexDirection: 'column', alignItems: 'flex-start', gap: '2px' }}>
+                    {lastRequestTokens > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
+                        <span title={`last request: input ${Math.round(lastRequestInputTokens).toLocaleString()} (of them cached ${Math.round(lastRequestCachedTokens).toLocaleString()}) output ${Math.round(lastRequestOutputTokens).toLocaleString()}`}>
+                          last request: tokens {Math.round(lastRequestTokens).toLocaleString()}
+                        </span>
+                        <span title="price works only for openrouter and orcarouter | not finished/stopped requests are not included but are taxed">
+                          ${lastRequestPrice.toFixed(8)}
+                        </span>
+                      </div>
+                    )}
+                    {chatTotalTokens > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
+                        <span title={`chat: input ${Math.round(chatInputTokens).toLocaleString()} (of them cached ${Math.round(chatCachedTokens).toLocaleString()}) output ${Math.round(chatOutputTokens).toLocaleString()}`}>
+                          chat: tokens {Math.round(chatTotalTokens).toLocaleString()}
+                        </span>
+                        <span title="price works only for openrouter and orcarouter | not finished/stopped requests are not included but are taxed">
+                          ${chatPrice.toFixed(8)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Input Actions */}
@@ -499,6 +850,15 @@ const AgentView: React.FC<AgentViewProps> = ({
                   >
                     🖼️
                   </button>
+                  {currentState.includes('working') && (
+                    <button
+                    onClick={handleSendText}
+                    className={`modern-btn ${inputText.trim() === '' ? 'secondary' : ''}`}
+                    title={"Send in current session (between tool calls)"}
+                  >
+                    {'➤'}
+                  </button>
+                  )}
                 </div>
               </div>
             </div>

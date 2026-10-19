@@ -3,11 +3,12 @@ import { QuickPickItem } from "vscode";
 import { Application } from "../application";
 import { IAddStrategy, LlmModel, ModelTypeDetails } from "../types";
 import { Utils } from "../utils";
-import { ModelType, UI_TEXT_KEYS, MODEL_TYPE_CONFIG } from "../constants";
+import { ModelType, UI_TEXT_KEYS, MODEL_TYPE_CONFIG, PERSISTENCE_KEYS } from "../constants";
 import * as path from "path";
 import * as fs from "fs";
 import { Configuration } from "../configuration";
 import { PREDEFINED_LISTS } from "../lists";
+import { ServiceUtils } from "./service-utils";
 
 export class ModelService {
     
@@ -151,18 +152,16 @@ export class ModelService {
         let allModels = modelsList.concat(PREDEFINED_LISTS.get(type) as LlmModel[])
         let modelsItems: QuickPickItem[] = this.getModels(modelsList, "", true);
         modelsItems = modelsItems.concat(this.getModels(PREDEFINED_LISTS.get(type) as LlmModel[], "(predefined) ", true, modelsList.length));
-
-        const launchToEndpoint = new Map([
-            ["launch_completion", "endpoint"],
-            ["launch_chat", "endpoint_chat"],
-            ["launch_embeddings", "endpoint_embeddings"],
-            ["launch_tools", "endpoint_tools"]
-        ]);
-        
         modelsItems.push({ label: (modelsItems.length + 1) + ". Use settings", description: "" });
 
         const selectedModelItem = await vscode.window.showQuickPick(modelsItems);
         if (selectedModelItem) {
+            const launchToEndpoint = new Map([
+                ["launch_completion", "endpoint"],
+                ["launch_chat", "endpoint_chat"],
+                ["launch_embeddings", "endpoint_embeddings"],
+                ["launch_tools", "endpoint_tools"]
+            ]);
             let model: LlmModel;
             if (parseInt(selectedModelItem.label.split(". ")[0], 10) == modelsItems.length) {
                 // Use settings
@@ -188,13 +187,68 @@ export class ModelService {
         return undefined
     }
 
+    getAllToolsModelsList = (): LlmModel[] => {
+        return this.app.configuration.tools_models_list
+                .concat((PREDEFINED_LISTS.get(ModelType.Tools) as LlmModel[]))
+    }
+
+    getAllChatModelsList = (): LlmModel[] => {
+        return this.app.configuration.chat_models_list
+                .concat((PREDEFINED_LISTS.get(ModelType.Chat) as LlmModel[]))
+    }
+
+    getAllComplModelsList = (): LlmModel[] => {
+        return this.app.configuration.completion_models_list
+                .concat((PREDEFINED_LISTS.get(ModelType.Completion) as LlmModel[]))
+    }
+
+    getAllEmbsModelsList = (): LlmModel[] => {
+        return this.app.configuration.embeddings_models_list
+                .concat((PREDEFINED_LISTS.get(ModelType.Embeddings) as LlmModel[]))
+    }
+
+
+    selectDefaultModel = async (modelType: ModelType, persistenceKey: string) => {
+        const defaultModel = this.app.persistence.getGlobalValue(persistenceKey);
+        if (defaultModel) {
+            await this.selectStartModel(defaultModel, modelType, this.getTypeDetails(modelType));
+        }
+        this.app.llamaWebviewProvider.updateLlamaView();
+    }
+
     public async selectStartModel(model: LlmModel, type: ModelType, details: ModelTypeDetails) {
         await this.addApiKey(model);
-        this.app.setSelectedModel(type, model);
-
+        
         await details.killCmd();
+        if (model.localStartCommand && this.app.configuration.only_one_local_model) await this.deselectAllLocalModels();
         if (model.localStartCommand) await details.shellCmd(this.sanitizeCommand(model.localStartCommand ?? ""));
         await this.app.persistence.setValue(this.getSelectedProp(type), model);
+        if (type === ModelType.Tools) {
+            this.app.llamaChatModelProvider.notifyModelsChanged();
+        }
+        if (type == ModelType.Tools && model?.isKeyRequired !== undefined && model.isKeyRequired){
+            const apiKey = this.app.persistence.getApiKey(model.endpoint??"");
+            if (apiKey){
+                this.app.configuration.axiosRequestConfigTools = {
+                    headers: {
+                        Authorization: `Bearer ${apiKey}`,
+                        "Content-Type": "application/json",
+                    },
+                }
+            }
+        }
+
+        this.app.setSelectedModel(type, model);
+    }
+
+    private deselectAllLocalModels = async () => {
+        // Deselects models for completion, chat, tools if they are local
+        const complModel = this.app.getComplModel()
+        if (complModel && complModel.localStartCommand) await this.deselectAndClearModel(ModelType.Completion);
+        const chatModel = this.app.getChatModel()
+        if (chatModel && chatModel.localStartCommand) await this.deselectAndClearModel(ModelType.Chat);
+        const toolsModel = this.app.getToolsModel()
+        if (toolsModel && toolsModel.localStartCommand) await this.deselectAndClearModel(ModelType.Tools);
     }
 
     public async addModel(type: ModelType, kind: 'local' | 'external' | 'hf' | 'oaiComp'): Promise<void> {
@@ -210,15 +264,19 @@ export class ModelService {
         const modelItem = await vscode.window.showQuickPick(modelsItems);
         if (modelItem) {
             let modelIndex = parseInt(modelItem.label.split(". ")[0], 10) - 1;
-            const shouldDeleteModel = await Utils.confirmAction("Are you sure you want to delete the model below?",
+            const shouldDeleteModel = await this.app.dialogs.confirmAction("Are you sure you want to delete the model below?",
                 this.getDetails(modelsList[modelIndex])
             );
             if (shouldDeleteModel) {
-                modelsList.splice(modelIndex, 1);
-                this.app.configuration.updateConfigValue(settingName, modelsList);
-                vscode.window.showInformationMessage("The model is deleted.")
+                this.deleteModelByIndex(modelsList, modelIndex, settingName);
             }
         }
+    }
+
+    deleteModelByIndex = (modelsList: LlmModel[], modelIndex: number, settingName: string) => {
+        modelsList.splice(modelIndex, 1);
+        this.app.configuration.updateConfigValue(settingName, modelsList);
+        vscode.window.showInformationMessage("The model is deleted.");
     }
 
     public async viewModel(type: ModelType , modelsList: LlmModel[]): Promise<void> {
@@ -234,7 +292,11 @@ export class ModelService {
     }
 
     public async showModelDetails(model: LlmModel): Promise<void> {
-        await Utils.showOkDialog("Model details: \n\n" + this.getDetails(model));
+        await this.app.dialogs.showOkDialog("Model details: \n\n" + this.getDetails(model));
+    }
+
+    public async addPersistModel(newModel: LlmModel, details: ModelTypeDetails){
+        ServiceUtils.addPersistModel(newModel, details, this.app);
     }
 
     async exportModel(type: ModelType, modelsList: LlmModel[]): Promise<void> {
@@ -245,7 +307,7 @@ export class ModelService {
         if (modelItem) {
             let modelIndex = parseInt(modelItem.label.split(". ")[0], 10) - 1;
             let selectedModel = allModels[modelIndex];
-            let shouldExport = await Utils.showYesNoDialog("Do you want to export the following model? \n\n" +
+            let shouldExport = await this.app.dialogs.showYesNoDialog("Do you want to export the following model? \n\n" +
                 this.getDetails(selectedModel)
             );
 
@@ -293,7 +355,7 @@ export class ModelService {
         if (newModel.aiModel) newModel.aiModel = this.sanitizeInput(newModel.aiModel);
 
         const modelDetails = this.getDetails(newModel);
-        const shouldAddModel = await Utils.confirmAction("A new model will be added. Do you want to add the model?", modelDetails);
+        const shouldAddModel = await this.app.dialogs.confirmAction("A new model will be added. Do you want to add the model?", modelDetails);
 
         if (shouldAddModel) {
             modelList.push(newModel);
@@ -325,12 +387,12 @@ export class ModelService {
                 modelsItems.push({
                     label: i + ". " + prefix + model.name,
                     description: model.localStartCommand,
-                    detail: "Selects the model" + (model.localStartCommand ? ", downloads the model (if not yet done) and starts a llama-server with it." : "")
+                    detail: "Selects the model " + (model.localStartCommand ? ", downloads the model (if not yet done) and starts a llama serve with it." : model.name)
                 });
             } else {
                 modelsItems.push({
                     label: i + ". " + prefix + model.name,
-                    description: model.localStartCommand
+                    description: model.localStartCommand??model.name
                 })
             }
         }
@@ -340,6 +402,7 @@ export class ModelService {
     public getTypeDetails(type: ModelType): ModelTypeDetails {
         const config = MODEL_TYPE_CONFIG[type];
         return {
+            modelType: type,
             modelsList: (this.app.configuration as any)[config.settingName],
             modelsListSettingName: config.settingName,
             newModelPort: (this.app.configuration as any)[config.portSetting],
@@ -391,6 +454,7 @@ export class ModelService {
 
     clearModel = (type: ModelType) => {
         this.app.setSelectedModel(type, Application.emptyModel);
+        this.app.setModelState(type, "");
         this.app.llamaWebviewProvider.updateLlamaView();
     }
     
@@ -417,12 +481,16 @@ export class ModelService {
     public async checkForToolsModel() {
         let toolsModel = this.app.getToolsModel();
         let targetUrl = this.app.configuration.endpoint_tools ? this.app.configuration.endpoint_tools + "/" : "";
+        if (!toolsModel || !toolsModel.name) {
+            await this.app.modelService.selectDefaultModel(ModelType.Tools, PERSISTENCE_KEYS.DEFAULT_TOOLS_MODEL);
+            toolsModel = this.app.getToolsModel();
+        }
         if (toolsModel && toolsModel.endpoint) {
             const toolsEndpoint = Utils.trimTrailingSlash(toolsModel.endpoint);
             targetUrl = toolsEndpoint ? toolsEndpoint + "/" : "";
         }
         if (!targetUrl) {
-            await Utils.suggestModelSelection(
+            await this.app.dialogs.suggestModelSelection(
                 "Select a tools model or an env with tools model to use Llama Agent.",
                 "After the tools model is loaded, try again opening llama agent.",
                 "No endpoint for the tools model. Select an env with tools model or enter the endpoint of a running llama.cpp server with tools model in setting endpoint_tools.",
@@ -432,5 +500,39 @@ export class ModelService {
             return false;
         }
         else return true;
+    }
+
+    periodicModelHealthUpdate = async () => {
+        if (this.app.configuration.health_check_interval_s > 0) {
+            if (this.app.configuration.health_check_compl_enabled  && this.app.isComplModelSelected()) {
+                await this.updateModelState(ModelType.Completion);
+            }
+            if (this.app.configuration.health_check_chat_enabled  && this.app.isChatModelSelected()) {
+                await this.updateModelState(ModelType.Chat);
+            }
+            if (this.app.configuration.health_check_embs_enabled  && this.app.isEmbeddingsModelSelected()) {
+                await this.updateModelState(ModelType.Embeddings);
+            }
+            if (this.app.configuration.health_check_tools_enabled  && this.app.isToolsModelSelected()) {
+                await this.updateModelState(ModelType.Tools);
+            }
+        }
+    }
+
+    public async checkModelHealth(modelType: ModelType) {
+        let healthState = await this.app.llamaServer.checkHealth(modelType, this.app.getModel(modelType));
+        if (healthState.toLowerCase() == "ok" || healthState.toLowerCase() == "healthy") vscode.window.showInformationMessage(modelType.charAt(0).toUpperCase() + modelType.slice(1) + " model health is OK.");
+        else vscode.window.showErrorMessage("Error with " + modelType + " model:" + healthState);
+        this.app.setModelState(modelType, healthState);
+    }
+
+    private async updateModelState(modelType: ModelType) {
+        let healthState = await this.app.llamaServer.checkHealth(modelType, this.app.getModel(modelType));
+        let currentHealthState = this.app.getModelState(modelType);
+        if ((currentHealthState == "" || currentHealthState.toLocaleLowerCase() == "ok" || currentHealthState.toLocaleLowerCase() == "healthy") 
+            && healthState.toLowerCase() != "ok" && healthState.toLowerCase() != "healthy") {
+            vscode.window.showErrorMessage("Error with completion model:" + healthState);
+        }
+        this.app.setModelState(modelType, healthState.slice(0, 150));
     }
 }

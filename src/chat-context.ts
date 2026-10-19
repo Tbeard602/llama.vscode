@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import ignore from 'ignore';
 import { ChunkEntry } from './types'
+import { ModelType, PERSISTENCE_KEYS } from './constants';
 
 interface FileProperties {
     hash: string;
@@ -53,6 +54,11 @@ export class ChatContext {
         this.app.statusbar.showTextInfo(this.app.configuration.getUiText("Filtering chunks with BM25..."))
         let topChunksBm25 = this.rankTexts(keywords, Array.from(this.entries.values()), this.app.configuration.rag_max_bm25_filter_chunks)
         let topContextChunks: ChunkEntry[];
+        if (!this.app.getEmbeddingsModel().endpoint){
+            await this.app.modelService.selectDefaultModel(ModelType.Embeddings, PERSISTENCE_KEYS.DEFAULT_EMBS_MODEL);
+            // Wait for the embeddings model to be loaded
+            await new Promise(resolve => setTimeout(resolve, 5000));
+        }
         if ((this.app.getEmbeddingsModel().endpoint && this.app.getEmbeddingsModel().endpoint?.trim() != "") 
             || this.app.configuration.endpoint_embeddings.trim() != ""){
             this.app.statusbar.showTextInfo(this.app.configuration.getUiText("Filtering chunks with embeddings..."))
@@ -339,13 +345,24 @@ export class ChatContext {
         const result: vscode.Uri[] = [];
         const igMap = new Map<string, ignore.Ignore>();
 
-        // First pass: Collect all .gitignore files and their rules
-        const gitignoreUris = await vscode.workspace.findFiles('**/.gitignore', '');
-        await Promise.all(gitignoreUris.map(async uri => {
+        // First pass: Collect all .gitignore and rag ignore files and their rules
+        let ignoreUris: vscode.Uri[] = []
+        let ragIgnoreFile = this.app.configuration.rag_ignore_file.trim();
+        if (ragIgnoreFile && ragIgnoreFile.trim() != "") {
+            ignoreUris = await vscode.workspace.findFiles('**/' + ragIgnoreFile, '');
+        }
+        
+        let gitignoreUris = await vscode.workspace.findFiles('**/.gitignore', '');
+        ignoreUris = ignoreUris.concat(gitignoreUris)
+        await Promise.all(ignoreUris.map(async uri => {
             try {
                 const content = await vscode.workspace.fs.readFile(uri);
                 const dir = path.dirname(uri.fsPath);
-                igMap.set(dir, ignore().add(content.toString()));
+                if (!igMap.has(dir)) {
+                    igMap.set(dir, ignore().add(content.toString()));
+                } else {
+                    igMap.get(dir)?.add(content.toString());
+                }
             } catch (error) {
                 console.error(`Error reading .gitignore at ${uri.fsPath}:`, error);
             }

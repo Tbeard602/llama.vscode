@@ -20,7 +20,7 @@ interface BM25Stats {
 }
 
 export class Utils {
-    static MSG_NO_UESR_PERMISSION = "The user doesn't give a permission to execute the request!";
+    static MSG_NO_USER_PERMISSION = "The user doesn't give a permission to execute the request!";
     static EMPTY_CHAT = {name: "", id: ""}
 
     static getLeadingSpaces = (input: string): string => {
@@ -311,58 +311,7 @@ export class Utils {
         return true;
     }
 
-    static showYesNoDialog = async (message: string): Promise<boolean> => {
-        const choice = await vscode.window.showInformationMessage(
-            "llama-vscode \n\n" + message,
-            { modal: true }, // Makes the dialog modal (blocks interaction until resolved)
-            'Yes',
-            'No'
-        );
-
-        return choice === 'Yes';
-    }
-
-    static showUserChoiceDialog = async (message: string, acceptLabel: string): Promise<boolean> => {
-        const choice = await vscode.window.showInformationMessage(
-            "llama-vscode \n\n" + message,
-            { modal: true }, // Makes the dialog modal (blocks interaction until resolved)
-            acceptLabel
-        );
-
-        return choice === acceptLabel;
-    }
-
-    static showYesYesdontaskNoDialog = async (message: string): Promise<[boolean, boolean]> => {
-        const choice = await vscode.window.showInformationMessage(
-            "llama-vscode \n\n" + message,
-            { modal: true }, // Makes the dialog modal (blocks interaction until resolved)
-            'Yes',
-            "Yes, don't ask again",
-            'No'
-        );
-
-        return [choice === 'Yes' || choice === "Yes, don't ask again", choice === "Yes, don't ask again"];
-    }
-
-    static showYesNoNodontAskDialog = async (message: string, acceptLabel: string): Promise<[boolean, boolean]> => {
-        const choice = await vscode.window.showInformationMessage(
-            "llama-vscode \n\n" + message,
-            { modal: true }, // Makes the dialog modal (blocks interaction until resolved)
-            acceptLabel,
-            'No',
-            "No, don't ask again"            
-        );
-
-        return [choice === acceptLabel, choice === "No, don't ask again"];
-    }
-
-    static showOkDialog = async (message: string) => {
-        const choice = await vscode.window.showInformationMessage(
-             "llama-vscode \n\n" + message,
-            { modal: true }, // Makes the dialog modal (blocks interaction until resolved)
-            'OK'
-        );
-    }
+    
 
     static getAbsolutePath = async (shortFileName: string): Promise<string | undefined> => {
         try {
@@ -557,155 +506,223 @@ export class Utils {
         return currentContent;
     }
 
-    static  applyEdits = async (diffText: string): Promise<string> => {
-        // Extract edit blocks from the diff-fenced format
-        let ret = UI_TEXT_KEYS.fileUpdated as string;
-        let editBlocks: string[][] = [];
-        if (!diffText) return "Edit file: The input parameter is missing!";
-        const blocks = diffText.split("```diff")
-        for (const block of blocks.slice(1)){
-            editBlocks.push(Utils.extractConflictParts("```diff" + block))
-        }
+    /**
+     * Removes the UTF-8 / UTF-16 BE BOM from the start of a string.
+     * Returns the original string if no BOM is found.
+     */
+    static stripBOMFromString = (content: string): string => {
+    // charCodeAt(0) === 0xFEFF is the BOM marker
+    if (content.charCodeAt(0) === 0xFEFF) {
+        return content.slice(1);
+    }
+    return content;
+    }
 
-        if (editBlocks.length === 0) {
-            if (diffText.length > 0) editBlocks.push(Utils.extractConflictParts("```diff\n" + diffText))
-            else return "Edit file: The input parameter is missing or incorrect format!";
-        }
+    /**
+     * Checks if `substring` appears exactly once in `str`.
+     * @param str - The string to search in.
+     * @param sub - The substring to search for.
+     * @returns 0 if not found 1 if found once 2 if found more than once.
+     */
+    static containsSubstringInfo = (str: string, sub: string): number => {
+        // Empty substring appears at every index; treat as not exactly once.
+        if (sub === "") return 0;
 
-        for (const block of editBlocks) {
-            if (block.length === 3) {
-                let filePath = block[0].trim();
-                if (filePath.startsWith("<file_path>")) filePath = filePath.slice("<file_path>".length);
-                if (filePath.endsWith("</file_path>")) filePath = filePath.slice(0,-"</file_path>".length)
-                let searchText = block[1].trim();
-                // Make sure only \n is used for new line
-                searchText = searchText.split(/\r?\n/).join("\n");
-                const replaceText = block[2].trim();
-                
-                let result = "";
-                let absolutePath = filePath;
-                if (!path.isAbsolute(filePath)) {
-                    if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
-                        return "File not found: " + filePath;
-                    }
-                    const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
-                    absolutePath = path.join(workspaceRoot, filePath);
+        const firstIndex = str.indexOf(sub);
+        if (firstIndex === -1) return 0;
+
+        const lastIndex = str.lastIndexOf(sub);
+        if (firstIndex === lastIndex) return 1;
+        else return 2;
+    }
+
+    static findReplaceFile = async (
+        filePath: string, 
+        searchText: string, 
+        replaceText: string, 
+        replaceAll: boolean,
+        fileReadTimestamps: Map<string, number>
+    ): Promise<string> => {
+        try {
+            // --- 1. Resolve path against workspaces ---
+            let absolutePath: string = filePath;
+            if (path.isAbsolute(filePath)) {
+                absolutePath = path.resolve(filePath);
+            } else {
+                if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
+                    return "Error: No workspace folder found.";
                 }
-                try {
-                    const fileExists = await fs.promises.access(absolutePath).then(() => true).catch(() => false);
-                    if (!fileExists){
-                        await fs.promises.mkdir(path.dirname(absolutePath), { recursive: true });
-                        await fs.promises.writeFile(absolutePath, result);
+                let resolved = false;
+                for (const folder of vscode.workspace.workspaceFolders) {
+                    const potential = path.join(folder.uri.fsPath, filePath);
+                    const relative = path.relative(folder.uri.fsPath, potential);
+                    if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
+                        absolutePath = potential;
+                        resolved = true;
+                        break;
                     }
-                    // Ensure only \n is used for new line
-                    result = (await fs.promises.readFile(absolutePath, 'utf-8')).split(/\r?\n/).join("\n");
-                    // Handle empty search text case
-                    if (searchText.trim() === '') {
-                        result += '\n' + replaceText;
-                        await fs.promises.writeFile(absolutePath, result);
-                    } else if (result.includes(searchText)) {
-                        result = result.split(searchText).join(replaceText);
-                        await fs.promises.writeFile(absolutePath, result);
-                    } else {
-                        ret = "Error edititing file " + filePath + " - " + "The search text is not found in the file.";
-                    }                    
-                } catch (error) {
-                    if (error instanceof Error) ret = "Error edititing file " + filePath + " - " + error.message;
-                    else ret = "Error edititing file " + filePath + " - " + error;
+                }
+                if (!resolved) {
+                    return `Error: Cannot resolve relative path "${filePath}" against any workspace folder.`;
                 }
             }
-        }
-        
-        return ret;
-    }
 
-    static extractConflictParts = (input: string): [string, string, string] => {
-        const lines = input.split(/\r?\n/);
-        const part1: string[] = [];
-        const part2: string[] = [];
-        const part3: string[] = [];
-        let i = 0;
+            // --- 2. Check file existence ---
+            const fileExists = await fs.promises.access(absolutePath).then(() => true).catch(() => false);
 
-        while (i < lines.length && !lines[i].startsWith('<<<<<<< SEARCH')) {
-            part1.push(lines[i]);
-            i++;
-        }
-
-        while (i < lines.length && !lines[i].startsWith('=======')) {
-            part2.push(lines[i]);
-            i++;
-        }
-
-        while (i < lines.length && !lines[i].startsWith('>>>>>>> REPLACE')) {
-            part3.push(lines[i]);
-            i++;
-        }
-
-        return [
-            part1.slice(1).join('\n'),
-            part2.slice(1).join('\n'),
-            part3.slice(1).join('\n')
-        ];
-    }
-
-    static showYesNoPopup = (message: string): Promise<boolean> => {
-        return new Promise((resolve) => {
-            const panel = vscode.window.createWebviewPanel(
-            'yesNoPopup',
-            'Confirmation',
-            { viewColumn: vscode.ViewColumn.One, preserveFocus: true },
-            { enableScripts: true }
-            );
-
-            panel.webview.html = `
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <style>
-                body {
-                    font-family: var(--vscode-font-family);
-                    padding: 16px;
-                    text-align: center;
-                }
-                .message {
-                    margin-bottom: 20px;
-                    white-space: pre-wrap;
-                }
-                .button {
-                    margin: 0 8px;
-                    padding: 4px 12px;
-                    border: none;
-                    background: var(--vscode-button-background);
-                    color: var(--vscode-button-foreground);
-                    cursor: pointer;
-                }
-                .button:hover {
-                    background: var(--vscode-button-hoverBackground);
-                }
-                </style>
-            </head>
-            <body>
-                <div class="message">${message.replace(/\n/g, '<br>')}</div>
-                <button class="button" onclick="respond(true)">Yes</button>
-                <button class="button" onclick="respond(false)">No</button>
-                <script>
-                const vscode = acquireVsCodeApi();
-                function respond(answer) {
-                    vscode.postMessage({ command: 'answer', value: answer });
-                }
-                </script>
-            </body>
-            </html>
-            `;
-
-            panel.webview.onDidReceiveMessage((message) => {
-            if (message.command === 'answer') {
-                resolve(message.value);
-                panel.dispose();
+            // --- 3. Read content if exists ---
+            let content = "";
+            if (fileExists) {
+                content = (await fs.promises.readFile(absolutePath, 'utf-8')).split(/\r?\n/).join("\n");
+                content = Utils.stripBOMFromString(content);
             }
-            });
-        });
-    }
+
+            // --- 4. Normalize searchText ---
+            const normalizedSearch = searchText.split(/\r?\n/).join("\n");
+
+            // --- 5. Creation mode ---
+            if (normalizedSearch.trim() === '') {
+                if (fileExists) {
+                    return `Error: File already exists at "${absolutePath}". Use edit mode (non-empty search) to modify it.`;
+                }
+                await fs.promises.mkdir(path.dirname(absolutePath), { recursive: true });
+                await fs.promises.writeFile(absolutePath, replaceText, 'utf-8');
+                return `Success: File created at "${absolutePath}".`;
+            }
+
+            // --- 6. Edit mode ---
+            if (!fileExists) {
+                return `Error: Cannot edit non-existent file "${absolutePath}". To create it, set search to an empty string.`;
+            }
+
+            // --- 7. Staleness check (recommended addition) ---
+            const stats = await fs.promises.stat(absolutePath);
+            const lastModified = fileReadTimestamps.get(absolutePath);
+            if (!lastModified)  return `Error: File "${absolutePath}" was not read. Read the file and retry.`;
+            if (lastModified && stats.mtimeMs !== lastModified) {
+                return `Error: File "${absolutePath}" was modified externally since last read. Re-read the file and retry.`;
+            }
+
+            // --- 8. Uniqueness check ---
+            const matchCount = Utils.containsSubstringInfo(content, normalizedSearch);
+            if (matchCount === 0) {
+                return `Error: Search string not found in "${filePath}".`;
+            }
+            if (matchCount > 1 && !replaceAll) {
+                return `Error: Found ${matchCount} matches in "${filePath}". Provide more context or set replace_all=true.`;
+            }
+
+            // --- 9. Perform replacement ---
+            const newContent = content.split(normalizedSearch).join(replaceText);
+            await fs.promises.writeFile(absolutePath, newContent, 'utf-8');
+
+            // Update timestamp
+            const newStats = await fs.promises.stat(absolutePath);
+            fileReadTimestamps.set(absolutePath, newStats.mtimeMs);
+
+            return `Success: File "${filePath}" updated.`;
+
+        } catch (error) {
+            return `Error editing file "${filePath}": ${error instanceof Error ? error.message : String(error)}`;
+        }
+    };
+
+    /**
+     * Performs multiple find-replace operations on a file sequentially.
+     * All edits are applied in-memory first. If any edit fails, the file is NOT modified.
+     * Only if ALL edits succeed, the file is written to disk.
+     */
+    static multiFindReplaceFile = async (
+        filePath: string, 
+        edits: Array<{ old_string: string; new_string: string; replace_all?: boolean }>,
+        fileReadTimestamps: Map<string, number>
+    ): Promise<string> => {
+        try {
+            // --- 1. Resolve path against workspaces ---
+            let absolutePath: string = filePath;
+            if (path.isAbsolute(filePath)) {
+                absolutePath = path.resolve(filePath);
+            } else {
+                if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
+                    return "Error: No workspace folder found.";
+                }
+                let resolved = false;
+                for (const folder of vscode.workspace.workspaceFolders) {
+                    const potential = path.join(folder.uri.fsPath, filePath);
+                    const relative = path.relative(folder.uri.fsPath, potential);
+                    if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
+                        absolutePath = potential;
+                        resolved = true;
+                        break;
+                    }
+                }
+                if (!resolved) {
+                    return `Error: Cannot resolve relative path "${filePath}" against any workspace folder.`;
+                }
+            }
+
+            // --- 2. Check file existence ---
+            const fileExists = await fs.promises.access(absolutePath).then(() => true).catch(() => false);
+
+            // --- 3. Read content if exists ---
+            let content = "";
+            if (fileExists) {
+                content = (await fs.promises.readFile(absolutePath, 'utf-8')).split(/\r?\n/).join("\n");
+                content = Utils.stripBOMFromString(content);
+            }
+
+            // --- 4. Staleness check ---
+            const stats = await fs.promises.stat(absolutePath);
+            const lastModified = fileReadTimestamps.get(absolutePath);
+            if (!lastModified)  return `Error: File "${absolutePath}" was not read. Read the file and retry.`;
+            if (lastModified && stats.mtimeMs !== lastModified) {
+                return `Error: File "${absolutePath}" was modified externally since last read. Re-read the file and retry.`;
+            }
+
+            // --- 5. Apply each edit sequentially in-memory ---
+            for (let i = 0; i < edits.length; i++) {
+                const edit = edits[i];
+                const normalizedSearch = edit.old_string.split(/\r?\n/).join("\n");
+
+                // Creation mode (empty search string) - not supported in multi-edit for existing files
+                if (normalizedSearch.trim() === '') {
+                    if (fileExists) {
+                        return `Error: Edit ${i + 1} failed - File already exists at "${absolutePath}". Use edit mode (non-empty search) to modify it.`;
+                    }
+                    return `Error: Edit ${i + 1} failed - Cannot create file in multi-edit mode. File must already exist.`;
+                }
+
+                // Edit mode - file must exist
+                if (!fileExists) {
+                    return `Error: Edit ${i + 1} failed - Cannot edit non-existent file "${absolutePath}".`;
+                }
+
+                // Uniqueness check
+                const matchCount = Utils.containsSubstringInfo(content, normalizedSearch);
+                if (matchCount === 0) {
+                    return `Error: Edit ${i + 1} failed - Search string not found in "${filePath}".`;
+                }
+                if (matchCount > 1 && !edit.replace_all) {
+                    return `Error: Edit ${i + 1} failed - Found more than once matches in "${filePath}". Provide more context or set replace_all=true.`;
+                }
+
+                // Perform replacement in-memory
+                content = content.split(normalizedSearch).join(edit.new_string);
+            }
+
+            // --- 6. All edits succeeded, write to file ---
+            await fs.promises.writeFile(absolutePath, content, 'utf-8');
+
+            // Update timestamp
+            const newStats = await fs.promises.stat(absolutePath);
+            fileReadTimestamps.set(absolutePath, newStats.mtimeMs);
+
+            return `Success: File "${filePath}" updated with ${edits.length} edit(s).`;
+
+        } catch (error) {
+            return `Error editing file "${filePath}": ${error instanceof Error ? error.message : String(error)}`;
+        }
+    };
 
     static fetchWebPage = async (url: string): Promise<string> => {
         // Validate the URL
@@ -830,10 +847,7 @@ export class Utils {
         return timeDifference >= twentyFourHoursInMs;
     }
 
-    static async confirmAction(message: string, details: string = ""): Promise<boolean> {
-        const fullMessage = message + (details ? "\n\n" + details : "");
-        return Utils.showYesNoDialog(fullMessage);
-    }
+
 
     static getFunctionFromFile = (filePath: string) => {
         let functionCode = fs.readFileSync(filePath, 'utf-8');
@@ -880,15 +894,7 @@ export class Utils {
         return items;
     } 
 
-    static suggestModelSelection = async (choiceMsg: string, yesMsg: string, noMsg: string, app: Application) => {
-        const shouldSelectModel = await Utils.showUserChoiceDialog(choiceMsg, "Select");
-        if (shouldSelectModel) {
-            app.llamaWebviewProvider.showEnvView();
-            vscode.window.showInformationMessage(yesMsg);
-        } else {
-            vscode.window.showErrorMessage(noMsg);
-        }
-    }
+
 
     static removeFirstAndLastLinesIfBackticks = (input: string): string => {
         const lines = input.split('\n'); // Split the string into lines
@@ -904,5 +910,185 @@ export class Utils {
         }
 
         return lines.join('\n'); // Join the remaining lines back into a string
+    }
+
+    static getTodosFilePath = () => {
+        let filePath = "";
+        const TODO_FILE = '.llama-vscode-todos.md';
+        if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
+            filePath = TODO_FILE;
+        } else {
+            const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
+            filePath = path.join(workspaceRoot, TODO_FILE);
+        }
+        return filePath;
+    }
+
+    static getWorkspaceFolder = () => {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
+            return "";
+        } else {
+            return vscode.workspace.workspaceFolders[0].uri.fsPath;
+        }
+    }
+
+    static getErrors(uri: vscode.Uri): string {
+        const diagnostics = vscode.languages.getDiagnostics(uri);
+        
+        if (diagnostics.length === 0) {
+            return '';
+        }
+        
+        const lines: string[] = [];
+        lines.push(`Diagnostics for ${uri.fsPath}:`);
+        lines.push('='.repeat(50));
+        
+        diagnostics.forEach((diag, index) => {
+            const severity = Utils.getSeverityString(diag.severity);
+            const line = diag.range.start.line + 1;
+            const col = diag.range.start.character + 1;
+            const source = diag.source || 'unknown';
+            
+            lines.push(`[${index + 1}] ${severity} (${source}): ${diag.message}`);
+            lines.push(`    at line ${line}, column ${col}`);
+            if (diag.code) {
+                lines.push(`    code: ${diag.code}`);
+            }
+            lines.push('');
+        });
+        
+        return lines.join('\n');
+    }
+
+
+    static getAllErrors(): string {
+        const allDiagnostics = vscode.languages.getDiagnostics();
+        
+        if (allDiagnostics.length === 0) {
+            return '✅ No diagnostics found in the workspace.';
+        }
+        
+        // Count total issues by severity
+        let totalErrors = 0;
+        let totalWarnings = 0;
+        let totalInfo = 0;
+        let totalHints = 0;
+        
+        const sections: string[] = [];
+        sections.push('📊 WORKSPACE DIAGNOSTICS SUMMARY');
+        sections.push('='.repeat(50));
+        
+        // Process each file
+        allDiagnostics.forEach(([uri, diagnostics]) => {
+            if (diagnostics.length === 0) return;
+            
+            const filePath = uri.fsPath;
+            const fileName = filePath.split('/').pop() || filePath;
+            
+            // Count issues in this file
+            const errors = diagnostics.filter(d => d.severity === vscode.DiagnosticSeverity.Error);
+            const warnings = diagnostics.filter(d => d.severity === vscode.DiagnosticSeverity.Warning);
+            const info = diagnostics.filter(d => d.severity === vscode.DiagnosticSeverity.Information);
+            const hints = diagnostics.filter(d => d.severity === vscode.DiagnosticSeverity.Hint);
+            
+            totalErrors += errors.length;
+            totalWarnings += warnings.length;
+            totalInfo += info.length;
+            totalHints += hints.length;
+            
+            sections.push('');
+            sections.push(`📁 ${fileName}`);
+            sections.push(`   Path: ${filePath}`);
+            sections.push(`   Issues: ${diagnostics.length} total (${errors.length} errors, ${warnings.length} warnings, ${info.length} info, ${hints.length} hints)`);
+            
+            // Show individual diagnostics for this file
+            diagnostics.forEach((diag) => {
+                const severity = Utils.getSeverityString(diag.severity);
+                const line = diag.range.start.line + 1;
+                const col = diag.range.start.character + 1;
+                const source = diag.source ? ` [${diag.source}]` : '';
+                
+                sections.push(`     ${severity}${source}: ${diag.message} (line ${line}, col ${col})`);
+            });
+        });
+        
+        // Add summary at the top (or bottom)
+        const summary = [
+            '',
+            '='.repeat(50),
+            '📈 TOTAL SUMMARY:',
+            `   ${allDiagnostics.reduce((sum, [_, diags]) => sum + diags.length, 0)} total issues`,
+            `   ${totalErrors} errors`,
+            `   ${totalWarnings} warnings`,
+            `   ${totalInfo} info messages`,
+            `   ${totalHints} hints`,
+            `   ${allDiagnostics.filter(([_, diags]) => diags.length > 0).length} files with issues`
+        ];
+        
+        // Insert summary at the beginning
+        sections.splice(1, 0, ...summary);
+        
+        return sections.join('\n');
+    }
+
+    static getSeverityString(severity: vscode.DiagnosticSeverity): string {
+        switch (severity) {
+            case vscode.DiagnosticSeverity.Error: return 'ERROR';
+            case vscode.DiagnosticSeverity.Warning: return 'WARNING';
+            case vscode.DiagnosticSeverity.Information: return 'INFO';
+            case vscode.DiagnosticSeverity.Hint: return 'HINT';
+            default: return 'UNKNOWN';
+        }
+    }
+
+    static isFilePath(filePath: string): boolean {
+        try {
+            // Check if the path is a real file
+            fs.accessSync(filePath, fs.constants.F_OK);
+            return true;
+        } catch (error) {
+            // If an error occurs, the path is not a real file
+            return false;
+        }
+    }
+
+    static async openProjectFolder(projectPath: string) {
+        try {
+            const folderPath = path.resolve(projectPath);
+            const folderUri = vscode.Uri.file(folderPath);
+            
+            // Verify folder exists
+            await vscode.workspace.fs.readDirectory(folderUri);
+            
+            // Check if it's already open
+            const workspaceFolders = vscode.workspace.workspaceFolders;
+            const alreadyOpen = workspaceFolders?.some(
+                workspace => workspace.uri.fsPath === folderUri.fsPath
+            );
+            
+            if (alreadyOpen) {
+                vscode.window.showInformationMessage(`Project '${projectPath}' is already open.`);
+                return;
+            }
+            
+            // Ask user if they want to open in current window or new window
+            const option = await vscode.window.showInformationMessage(
+                `Open project '${projectPath}'?`,
+                'Open in Current Window',
+                'Open in New Window'
+            );
+            
+            if (option) {
+                const forceNewWindow = option === 'Open in New Window';
+                await vscode.commands.executeCommand(
+                    'vscode.openFolder', 
+                    folderUri, 
+                    { forceNewWindow }
+                );
+            }
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to open project: ${error}`);
+        }
     }
 }

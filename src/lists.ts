@@ -4,28 +4,28 @@ export const PREDEFINED_LISTS = new Map<string, any>([
     [PREDEFINED_LISTS_KEYS.COMPLETIONS, [
             {
               "name": "Qwen2.5-Coder-1.5B-Q8_0-GGUF (<= 8GB VRAM)",
-              "localStartCommand": "llama-server --fim-qwen-1.5b-default -ngl 99 --port 8012",
+              "localStartCommand": "llama serve --fim-qwen-1.5b-default --port 8012",
               "endpoint": "http://localhost:8012",
               "aiModel": "",
               "isKeyRequired": false
             },
             {
               "name": "Qwen2.5-Coder-3B-Q8_0-GGUF (<= 16GB VRAM)",
-              "localStartCommand": "llama-server --fim-qwen-3b-default -ngl 99 --port 8012",
+              "localStartCommand": "llama serve --fim-qwen-3b-default --port 8012",
               "endpoint": "http://localhost:8012",
               "aiModel": "",
               "isKeyRequired": false
             },
             {
               "name": "Qwen2.5-Coder-7B-Q8_0-GGUF (> 16GB VRAM)",
-              "localStartCommand": "llama-server --fim-qwen-7b-default -ngl 99 --port 8012",
+              "localStartCommand": "llama serve --fim-qwen-7b-default --port 8012",
               "endpoint": "http://localhost:8012",
               "aiModel": "",
               "isKeyRequired": false
             },
             {
               "name": "Qwen2.5-Coder-1.5B-Q8_0-GGUF (CPU Only)",
-              "localStartCommand": "llama-server -hf ggml-org/Qwen2.5-Coder-1.5B-Q8_0-GGUF -ub 1024 -b 1024 -dt 0.1 --ctx-size 0 --cache-reuse 256 --port 8012",
+              "localStartCommand": "llama serve -hf ggml-org/Qwen2.5-Coder-1.5B-Q8_0-GGUF -ub 1024 -b 1024 -dt 0.1 --ctx-size 0 --cache-reuse 256 --port 8012",
               "endpoint": "http://localhost:8012",
               "aiModel": "",
               "isKeyRequired": false
@@ -34,39 +34,39 @@ export const PREDEFINED_LISTS = new Map<string, any>([
 [PREDEFINED_LISTS_KEYS.CHATS, [
             {
               "name": "Qwen2.5-Coder-1.5B-Instruct-Q8_0-GGUF (<= 8GB VRAM)",
-              "localStartCommand": "llama-server -hf ggml-org/Qwen2.5-Coder-1.5B-Instruct-Q8_0-GGUF -ngl 99 -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
+              "localStartCommand": "llama serve -hf ggml-org/Qwen2.5-Coder-1.5B-Instruct-Q8_0-GGUF -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
               "endpoint": "http://127.0.0.1:8011"
             },
             {
               "name": "Qwen2.5-Coder-3B-Instruct-Q8_0-GGUF (<= 16GB VRAM)",
-              "localStartCommand": "llama-server -hf ggml-org/Qwen2.5-Coder-3B-Instruct-Q8_0-GGUF -ngl 99 -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
+              "localStartCommand": "llama serve -hf ggml-org/Qwen2.5-Coder-3B-Instruct-Q8_0-GGUF -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
               "endpoint": "http://127.0.0.1:8011"
             },
             {
               "name": "Qwen2.5-Coder-7B-Instruct-Q8_0-GGUF (> 16GB VRAM)",
-              "localStartCommand": "llama-server -hf ggml-org/Qwen2.5-Coder-7B-Instruct-Q8_0-GGUF -ngl 99 -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
+              "localStartCommand": "llama serve -hf ggml-org/Qwen2.5-Coder-7B-Instruct-Q8_0-GGUF -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
               "endpoint": "http://127.0.0.1:8011"
             },
             {
               "name": "Qwen2.5-Coder-14B-Instruct-Q8_0-GGUF (> 32GB VRAM)",
-              "localStartCommand": "llama-server -hf ggml-org/Qwen2.5-Coder-14B-Instruct-Q8_0-GGUF -ngl 99 -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
+              "localStartCommand": "llama serve -hf ggml-org/Qwen2.5-Coder-14B-Instruct-Q8_0-GGUF -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
               "endpoint": "http://127.0.0.1:8011"
             },
             {
               "name": "Qwen2.5-Coder-1.5B-Instruct-Q8_0-GGUF (CPU Only)",
-              "localStartCommand": "llama-server -hf ggml-org/Qwen2.5-Coder-1.5B-Instruct-Q8_0-GGUF -ub 1024 -b 1024 -dt 0.1 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
+              "localStartCommand": "llama serve -hf ggml-org/Qwen2.5-Coder-1.5B-Instruct-Q8_0-GGUF -ub 1024 -b 1024 -dt 0.1 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
               "endpoint": "http://127.0.0.1:8011"
             },
             {
               "name": "gemini qat tools",
-              "localStartCommand": "llama-server -m c:\\ai\\gemma-3-4B-it-QAT-Q4_0.gguf --port 8011",
+              "localStartCommand": "llama serve -m c:\\ai\\gemma-3-4B-it-QAT-Q4_0.gguf --port 8011",
               "endpoint": "http://localhost:8011",
               "aiModel": "",
               "isKeyRequired": false
             },
             {
               "name": "OpenAI gpt-oss 20B",
-              "localStartCommand": "llama-server -hf ggml-org/gpt-oss-20b-GGUF -c 0 --jinja --reasoning-format none -np 2 --port 8011",
+              "localStartCommand": "llama serve -hf ggml-org/gpt-oss-20b-GGUF -c 0 --reasoning-format none -np 2 --port 8011",
               "endpoint": "http://localhost:8011",
               "aiModel": "",
               "isKeyRequired": false
@@ -75,23 +75,74 @@ export const PREDEFINED_LISTS = new Map<string, any>([
 [PREDEFINED_LISTS_KEYS.EMBEDDINGS,  [
             {
               "name": "Nomic-Embed-Text-V2-GGUF",
-              "localStartCommand": "llama-server -hf ggml-org/Nomic-Embed-Text-V2-GGUF -ub 2048 -b 2048 --ctx-size 2048 --embeddings --port 8010",
+              "localStartCommand": "llama serve -hf ggml-org/Nomic-Embed-Text-V2-GGUF -ub 2048 -b 2048 --ctx-size 2048 --embeddings --port 8010",
               "endpoint": "http://127.0.0.1:8010"
             }
           ]],
-[PREDEFINED_LISTS_KEYS.TOOLS,  [
+[PREDEFINED_LISTS_KEYS.TOOLS,[       
+                  
             {
-              "name": "OpenAI gpt-oss 20B (LOCAL) (> 19GB VRAM)",
-              "localStartCommand": "llama-server -hf ggml-org/gpt-oss-20b-GGUF -c 0 --jinja --reasoning-format none -np 2 --port 8009",
+              "name": "Qwen3.5-2B-GGUF:Q8_0 (LOCAL) (CPU or VRAM>3GB)",
+              "localStartCommand": "llama serve -hf unsloth/Qwen3.5-2B-GGUF:Q8_0 --port 8009 --host 127.0.0.1",
               "endpoint": "http://localhost:8009",
               "aiModel": "",
               "isKeyRequired": false
             },
             {
-              "name": "Z.AI: GLM 4.5 Air (free): GLM 4.5 Air - 128.000 context (OpenRouter)",
+              "name": "Qwen3.6-27B-GGUF:Q8_0 MTP (LOCAL) (VRAM>20)",
+              "localStartCommand": 'llama serve -hf ggml-org/Qwen3.6-27B-GGUF:Q8_0 --spec-draft-hf ggml-org/Qwen3.5-0.8B-GGUF:Q8_0 --ctx-size 262144 --batch-size 2048 --ubatch-size 2048 --chat-template-kwargs {"preserve_thinking": true}',
+              "endpoint": "http://localhost:8009",
+              "aiModel": "",
+              "isKeyRequired": false
+            },
+            {
+              "name": "Qwen3.5-4B-GGUF:Q8_0 (LOCAL) (VRAM>6GB)",
+              "localStartCommand": "llama serve -hf unsloth/Qwen3.5-4B-GGUF:Q8_0 -c 0 -ub 1024 -b 1024 --cache-reuse 256 --port 8009 --host 127.0.0.1",
+              "endpoint": "http://localhost:8009",
+              "aiModel": "",
+              "isKeyRequired": false
+            },
+            {
+              "name": "Qwen3.5-9B-GGUF:Q8_0 (LOCAL) (VRAM>12GB)",
+              "localStartCommand": "llama serve -hf unsloth/Qwen3.5-9B-GGUF:Q8_0 -c 0 -ub 1024 -b 1024 --cache-reuse 256 --port 8009 --host 127.0.0.1",
+              "endpoint": "http://localhost:8009",
+              "aiModel": "",
+              "isKeyRequired": false
+            },
+            {
+              "name": "(OrcaRouter) DeepSeek V4 Flash 0731 1M context $0.15/M input $0.29/M output cache $0.02 (twice the price during peek hours 01:00–04:00, 06:00–10:00 (UTC))",
+              "localStartCommand": "",
+              "endpoint": "https://api.orcarouter.ai",
+              "aiModel": "deepseek/deepseek-v4-flash-0731",
+              "isKeyRequired": true
+            },
+            {
+              "name": "(OrcaRouter) Qwen3.7 Flash 1M context $0.03/M input $0.13/M output (if input tokens > 32K the price is higher)",
+              "localStartCommand": "",
+              "endpoint": "https://api.orcarouter.ai",
+              "aiModel": "qwen/qwen3.7-flash",
+              "isKeyRequired": true
+            },
+            {
+              "name": "(OpenRouter) Qwen3.7 Flash 1M context $0.03/M input $0.13/M output (if input tokens > 32K the price is higher)",
+              "localStartCommand": "",
               "endpoint": "https://openrouter.ai/api",
-              "isKeyRequired": true,
-              "aiModel": "z-ai/glm-4.5-air:free"
+              "aiModel": "qwen/qwen3.7-flash",
+              "isKeyRequired": true
+            },
+            {
+              "name": "(OrcaRouter) GPT-6 Astra 1M context $10/M input $50/M output ($20/$75 if input tokens >275K)",
+              "localStartCommand": "",
+              "endpoint": "https://api.orcarouter.ai",
+              "aiModel": "openai/gpt-6-astra",
+              "isKeyRequired": true
+            },
+            {
+              "name": "(OrcaRouter) Claude Fable 5.1 1M context $10/M input $50/M output",
+              "localStartCommand": "",
+              "endpoint": "https://api.orcarouter.ai",
+              "aiModel": "anthropic/claude-fable-5.1",
+              "isKeyRequired": true
             },
             {
               "name": "Z.AI: GLM 4.5 - 128000 context $0.60/M input tokens $2.20/M output tokens (OpenRouter)",
@@ -106,13 +157,13 @@ export const PREDEFINED_LISTS = new Map<string, any>([
               "aiModel": "z-ai/glm-4.5-air"
             },
             {
-              "name": "Qwen: Qwen3 235B A22B Thinking 2507 - 262 144 context $0.118/M input tokens $0.118/M output tokens (OpenRouter)",
+              "name": "Qwen: Qwen3 235B A22B Thinking 2507 - 262 144 context $0.23/M input tokens $2.30/M output tokens (OpenRouter)",
               "endpoint": "https://openrouter.ai/api",
               "isKeyRequired": true,
               "aiModel": "qwen/qwen3-235b-a22b-thinking-2507"
             },
             {
-              "name": "Qwen: Qwen3 VL 30B A3B Instruct - 262 144 context $0.15/M input tokens $0.60/M output tokens (OpenRouter)",
+              "name": "Qwen: Qwen3 VL 30B A3B Instruct - 262 144 context $0.13/M input tokens $0.52/M output tokens (OpenRouter)",
               "endpoint": "https://openrouter.ai/api",
               "isKeyRequired": true,
               "aiModel": "qwen/qwen3-vl-30b-a3b-instruct"
@@ -124,16 +175,22 @@ export const PREDEFINED_LISTS = new Map<string, any>([
               "aiModel": "qwen/qwen3-coder"
             },
             {
-              "name": "Qwen: Qwen3 235B A22B Instruct 2507 - 262K context $0.12/M input tokens $0.59/M output tokens (OpenRouter)",
+              "name": "Qwen: Qwen3 235B A22B Instruct 2507 - 262K context $0.12/M input tokens $0.80/M output tokens (OpenRouter)",
               "endpoint": "https://openrouter.ai/api",
               "isKeyRequired": true,
               "aiModel": "qwen/qwen3-235b-a22b-2507"
             },
             {
-              "name": "MoonshotAI: Kimi K2 - 131K context $0.55/M input tokens $2.20/M output tokens (OpenRouter)",
+              "name": "Kimi K3 tools on demand 1M context $3/M input, $15/M output (moonshot.ai)",
+              "endpoint": "https://api.moonshot.ai",
+              "isKeyRequired": true,
+              "aiModel": "kimi-k3"
+            },
+            {
+              "name": "Kimi K3 - 1M context $3/M input, $15/M output, $0.30/M cache (OpenRouter)",
               "endpoint": "https://openrouter.ai/api",
               "isKeyRequired": true,
-              "aiModel": "moonshotai/kimi-k2"
+              "aiModel": "moonshotai/kimi-k3"
             },
             {
               "name": "Google: Gemini 2.5 Flash Lite - 1.05M context $0.10/M input tokens $0.40/M output tokens (OpenRouter)",
@@ -169,24 +226,24 @@ export const PREDEFINED_LISTS = new Map<string, any>([
               "description": "Everything local, gpt-oss 20B for agent",
               "completion": {
                 "name": "Qwen2.5-Coder-1.5B-Q8_0-GGUF (<= 8GB VRAM)",
-                "localStartCommand": "llama-server --fim-qwen-1.5b-default -ngl 99 --port 8012",
+                "localStartCommand": "llama serve --fim-qwen-1.5b-default --port 8012",
                 "endpoint": "http://localhost:8012",
                 "aiModel": "",
                 "isKeyRequired": false
               },
               "chat": {
                 "name": "Qwen2.5-Coder-1.5B-Instruct-Q8_0-GGUF (<= 8GB VRAM)",
-                "localStartCommand": "llama-server -hf ggml-org/Qwen2.5-Coder-1.5B-Instruct-Q8_0-GGUF -ngl 99 -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
+                "localStartCommand": "llama serve -hf ggml-org/Qwen2.5-Coder-1.5B-Instruct-Q8_0-GGUF -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
                 "endpoint": "http://127.0.0.1:8011"
               },
               "embeddings": {
                 "name": "Nomic-Embed-Text-V2-GGUF",
-                "localStartCommand": "llama-server -hf ggml-org/Nomic-Embed-Text-V2-GGUF -ngl 99 -ub 2048 -b 2048 --ctx-size 2048 --embeddings --port 8010",
+                "localStartCommand": "llama serve -hf ggml-org/Nomic-Embed-Text-V2-GGUF -ub 2048 -b 2048 --ctx-size 2048 --embeddings --port 8010",
                 "endpoint": "http://127.0.0.1:8010"
               },
               "tools": {
                 "name": "OpenAI gpt-oss 20B",
-                "localStartCommand": "llama-server -hf ggml-org/gpt-oss-20b-GGUF -c 0 --jinja --reasoning-format none -np 2 --port 8009",
+                "localStartCommand": "llama serve -hf ggml-org/gpt-oss-20b-GGUF -c 0 --reasoning-format none -np 2 --port 8009",
                 "endpoint": "http://localhost:8009",
                 "aiModel": "",
                 "isKeyRequired": false
@@ -197,24 +254,24 @@ export const PREDEFINED_LISTS = new Map<string, any>([
               "description": "Everything local, gpt-oss 20B for agent",
               "completion": {
                 "name": "Qwen2.5-Coder-3B-Q8_0-GGUF (<= 16GB VRAM)",
-                "localStartCommand": "llama-server --fim-qwen-3b-default -ngl 99 --port 8012",
+                "localStartCommand": "llama serve --fim-qwen-3b-default --port 8012",
                 "endpoint": "http://localhost:8012",
                 "aiModel": "",
                 "isKeyRequired": false
               },
               "chat": {
                 "name": "Qwen2.5-Coder-3B-Instruct-Q8_0-GGUF (<= 16GB VRAM)",
-                "localStartCommand": "llama-server -hf ggml-org/Qwen2.5-Coder-3B-Instruct-Q8_0-GGUF -ngl 99 -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
+                "localStartCommand": "llama serve -hf ggml-org/Qwen2.5-Coder-3B-Instruct-Q8_0-GGUF -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
                 "endpoint": "http://127.0.0.1:8011"
               },
               "embeddings": {
                 "name": "Nomic-Embed-Text-V2-GGUF",
-                "localStartCommand": "llama-server -hf ggml-org/Nomic-Embed-Text-V2-GGUF -ngl 99 -ub 2048 -b 2048 --ctx-size 2048 --embeddings --port 8010",
+                "localStartCommand": "llama serve -hf ggml-org/Nomic-Embed-Text-V2-GGUF -ub 2048 -b 2048 --ctx-size 2048 --embeddings --port 8010",
                 "endpoint": "http://127.0.0.1:8010"
               },
               "tools": {
                 "name": "OpenAI gpt-oss 20B",
-                "localStartCommand": "llama-server -hf ggml-org/gpt-oss-20b-GGUF -c 0 --jinja --reasoning-format none -np 2 --port 8009",
+                "localStartCommand": "llama serve -hf ggml-org/gpt-oss-20b-GGUF -c 0 --reasoning-format none -np 2 --port 8009",
                 "endpoint": "http://localhost:8009",
                 "aiModel": "",
                 "isKeyRequired": false
@@ -225,24 +282,24 @@ export const PREDEFINED_LISTS = new Map<string, any>([
               "description": "Everything local, gpt-oss 20B for agent",
               "completion": {
                 "name": "Qwen2.5-Coder-7B-Q8_0-GGUF (> 16GB VRAM)",
-                "localStartCommand": "llama-server --fim-qwen-7b-default -ngl 99 --port 8012",
+                "localStartCommand": "llama serve --fim-qwen-7b-default --port 8012",
                 "endpoint": "http://localhost:8012",
                 "aiModel": "",
                 "isKeyRequired": false
               },
               "chat": {
                 "name": "Qwen2.5-Coder-7B-Instruct-Q8_0-GGUF (> 16GB VRAM)",
-                "localStartCommand": "llama-server -hf ggml-org/Qwen2.5-Coder-7B-Instruct-Q8_0-GGUF -ngl 99 -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
+                "localStartCommand": "llama serve -hf ggml-org/Qwen2.5-Coder-7B-Instruct-Q8_0-GGUF -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
                 "endpoint": "http://127.0.0.1:8011"
               },
               "embeddings": {
                 "name": "Nomic-Embed-Text-V2-GGUF",
-                "localStartCommand": "llama-server -hf ggml-org/Nomic-Embed-Text-V2-GGUF -ngl 99 -ub 2048 -b 2048 --ctx-size 2048 --embeddings --port 8010",
+                "localStartCommand": "llama serve -hf ggml-org/Nomic-Embed-Text-V2-GGUF -ub 2048 -b 2048 --ctx-size 2048 --embeddings --port 8010",
                 "endpoint": "http://127.0.0.1:8010"
               },
               "tools": {
                 "name": "OpenAI gpt-oss 20B",
-                "localStartCommand": "llama-server -hf ggml-org/gpt-oss-20b-GGUF -c 0 --jinja --reasoning-format none -np 2 --port 8009",
+                "localStartCommand": "llama serve -hf ggml-org/gpt-oss-20b-GGUF -c 0 --reasoning-format none -np 2 --port 8009",
                 "endpoint": "http://localhost:8009",
                 "aiModel": "",
                 "isKeyRequired": false
@@ -253,7 +310,7 @@ export const PREDEFINED_LISTS = new Map<string, any>([
               "description": "For laptops only with CPU, lightweight model for completion ",
               "completion": {
                 "name": "Qwen2.5-Coder-1.5B-Q8_0-GGUF (CPU Only)",
-                "localStartCommand": "llama-server -hf ggml-org/Qwen2.5-Coder-1.5B-Q8_0-GGUF -ub 1024 -b 1024 -dt 0.1 --ctx-size 0 --cache-reuse 256 --port 8012",
+                "localStartCommand": "llama serve -hf ggml-org/Qwen2.5-Coder-1.5B-Q8_0-GGUF -ub 1024 -b 1024 -dt 0.1 --ctx-size 0 --cache-reuse 256 --port 8012",
                 "endpoint": "http://localhost:8012",
                 "aiModel": "",
                 "isKeyRequired": false
@@ -285,7 +342,7 @@ export const PREDEFINED_LISTS = new Map<string, any>([
               "description": "Only for code completions model Qwen2.5-Coder-1.5B-Q8_0-GGUF (<= 8GB VRAM)",
               "completion": {
                 "name": "Qwen2.5-Coder-1.5B-Q8_0-GGUF (<= 8GB VRAM)",
-                "localStartCommand": "llama-server --fim-qwen-1.5b-default -ngl 99 --port 8012",
+                "localStartCommand": "llama serve --fim-qwen-1.5b-default --port 8012",
                 "endpoint": "http://localhost:8012",
                 "aiModel": "",
                 "isKeyRequired": false
@@ -317,7 +374,7 @@ export const PREDEFINED_LISTS = new Map<string, any>([
               "description": "Only for completions, model Qwen2.5-Coder-3B-Q8_0-GGUF (<= 16GB VRAM | HD: 3,2 GB)",
               "completion": {
                 "name": "Qwen2.5-Coder-3B-Q8_0-GGUF (<= 16GB VRAM)",
-                "localStartCommand": "llama-server --fim-qwen-3b-default -ngl 99 --port 8012",
+                "localStartCommand": "llama serve --fim-qwen-3b-default --port 8012",
                 "endpoint": "http://localhost:8012",
                 "aiModel": "",
                 "isKeyRequired": false
@@ -349,7 +406,7 @@ export const PREDEFINED_LISTS = new Map<string, any>([
               "description": "Only for code completions, model Qwen2.5-Coder-7B-Q8_0-GGUF (> 16GB VRAM)",
               "completion": {
                 "name": "Qwen2.5-Coder-7B-Q8_0-GGUF (> 16GB VRAM | HD: 8.1 GB)",
-                "localStartCommand": "llama-server --fim-qwen-7b-default -ngl 99 --port 8012",
+                "localStartCommand": "llama serve --fim-qwen-7b-default --port 8012",
                 "endpoint": "http://localhost:8012",
                 "aiModel": "",
                 "isKeyRequired": false
@@ -385,7 +442,7 @@ export const PREDEFINED_LISTS = new Map<string, any>([
               },
               "chat": {
                 "name": "Qwen2.5-Coder-1.5B-Instruct-Q8_0-GGUF (CPU Only)",
-                "localStartCommand": "llama-server -hf ggml-org/Qwen2.5-Coder-1.5B-Instruct-Q8_0-GGUF -ub 1024 -b 1024 -dt 0.1 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
+                "localStartCommand": "llama serve -hf ggml-org/Qwen2.5-Coder-1.5B-Instruct-Q8_0-GGUF -ub 1024 -b 1024 -dt 0.1 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
                 "endpoint": "http://127.0.0.1:8011"
               },
               "embeddings": {
@@ -398,20 +455,20 @@ export const PREDEFINED_LISTS = new Map<string, any>([
               }
             },
             {
-              "name": "Local, only chat, chat with project context & edit (<= 16GB VRAM | HD: 4 GB)",
-              "description": "Could be used for edit with AI, chat with AI, chat with AI with project context Qwen2.5-Coder-3B-Instruct-Q8_0-GGUF + embeddings model (<= 16GB VRAM)",
+              "name": "Local, only chat & edit (<= 16GB VRAM | HD: 4 GB)",
+              "description": "Could be used for edit with AI, chat with AI, Qwen2.5-Coder-3B-Instruct-Q8_0-GGUF + embeddings model (<= 16GB VRAM)",
               "completion": {
                 "name": "",
                 "localStartCommand": ""
               },
               "chat": {
                 "name": "Qwen2.5-Coder-3B-Instruct-Q8_0-GGUF (<= 16GB VRAM)",
-                "localStartCommand": "llama-server -hf ggml-org/Qwen2.5-Coder-3B-Instruct-Q8_0-GGUF -ngl 99 -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
+                "localStartCommand": "llama serve -hf ggml-org/Qwen2.5-Coder-3B-Instruct-Q8_0-GGUF -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
                 "endpoint": "http://127.0.0.1:8011"
               },
               "embeddings": {
                 "name": "Nomic-Embed-Text-V2-GGUF",
-                "localStartCommand": "llama-server -hf ggml-org/Nomic-Embed-Text-V2-GGUF -ngl 99 -ub 2048 -b 2048 --ctx-size 2048 --embeddings --port 8010",
+                "localStartCommand": "llama serve -hf ggml-org/Nomic-Embed-Text-V2-GGUF -ub 2048 -b 2048 --ctx-size 2048 --embeddings --port 8010",
                 "endpoint": "http://127.0.0.1:8010"
               },
               "tools": {
@@ -428,7 +485,7 @@ export const PREDEFINED_LISTS = new Map<string, any>([
               },
               "chat": {
                 "name": "Qwen2.5-Coder-1.5B-Instruct-Q8_0-GGUF (<= 8GB VRAM)",
-                "localStartCommand": "llama-server -hf ggml-org/Qwen2.5-Coder-1.5B-Instruct-Q8_0-GGUF -ngl 99 -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
+                "localStartCommand": "llama serve -hf ggml-org/Qwen2.5-Coder-1.5B-Instruct-Q8_0-GGUF -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
                 "endpoint": "http://127.0.0.1:8011"
               },
               "embeddings": {
@@ -441,20 +498,20 @@ export const PREDEFINED_LISTS = new Map<string, any>([
               }
             },
             {
-              "name": "Local, only chat, chat with project context & edit (> 16GB VRAM | HD: 8.6 GB)",
-              "description": "Good for chat with AI, chat with AI with project context, edit Qwen2.5-Coder-7B-Instruct-Q8_0-GGUF + embeddings model  (> 16GB VRAM)",
+              "name": "Local, only chat & edit (> 16GB VRAM | HD: 8.6 GB)",
+              "description": "Good for chat with AI, edit Qwen2.5-Coder-7B-Instruct-Q8_0-GGUF + embeddings model  (> 16GB VRAM)",
               "completion": {
                 "name": "",
                 "localStartCommand": ""
               },
               "chat": {
                 "name": "Qwen2.5-Coder-7B-Instruct-Q8_0-GGUF (> 16GB VRAM)",
-                "localStartCommand": "llama-server -hf ggml-org/Qwen2.5-Coder-7B-Instruct-Q8_0-GGUF -ngl 99 -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
+                "localStartCommand": "llama serve -hf ggml-org/Qwen2.5-Coder-7B-Instruct-Q8_0-GGUF -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
                 "endpoint": "http://127.0.0.1:8011"
               },
               "embeddings": {
                 "name": "Nomic-Embed-Text-V2-GGUF",
-                "localStartCommand": "llama-server -hf ggml-org/Nomic-Embed-Text-V2-GGUF -ngl 99 -ub 2048 -b 2048 --ctx-size 2048 --embeddings --port 8010",
+                "localStartCommand": "llama serve -hf ggml-org/Nomic-Embed-Text-V2-GGUF -ub 2048 -b 2048 --ctx-size 2048 --embeddings --port 8010",
                 "endpoint": "http://127.0.0.1:8010"
               },
               "tools": {
@@ -471,12 +528,12 @@ export const PREDEFINED_LISTS = new Map<string, any>([
               },
               "chat": {
                 "name": "Qwen2.5-Coder-3B-Instruct-Q8_0-GGUF (<= 16GB VRAM)",
-                "localStartCommand": "llama-server -hf ggml-org/Qwen2.5-Coder-3B-Instruct-Q8_0-GGUF -ngl 99 -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
+                "localStartCommand": "llama serve -hf ggml-org/Qwen2.5-Coder-3B-Instruct-Q8_0-GGUF -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
                 "endpoint": "http://127.0.0.1:8011"
               },
               "embeddings": {
                 "name": "Nomic-Embed-Text-V2-GGUF",
-                "localStartCommand": "llama-server -hf ggml-org/Nomic-Embed-Text-V2-GGUF -ngl 99 -ub 2048 -b 2048 --ctx-size 2048 --embeddings --port 8010",
+                "localStartCommand": "llama serve -hf ggml-org/Nomic-Embed-Text-V2-GGUF -ub 2048 -b 2048 --ctx-size 2048 --embeddings --port 8010",
                 "endpoint": "http://127.0.0.1:8010"
               },
               "tools": {
@@ -491,19 +548,19 @@ export const PREDEFINED_LISTS = new Map<string, any>([
               "description": "The minimal configuration for completions (local), chat (local) and agent (remote - OpenRouter), requires OpenRouter API key for agent",
               "completion": {
                 "name": "Qwen2.5-Coder-1.5B-Q8_0-GGUF (<= 8GB VRAM)",
-                "localStartCommand": "llama-server --fim-qwen-1.5b-default -ngl 99 --port 8012",
+                "localStartCommand": "llama serve --fim-qwen-1.5b-default --port 8012",
                 "endpoint": "http://localhost:8012",
                 "aiModel": "",
                 "isKeyRequired": false
               },
               "chat": {
                 "name": "Qwen2.5-Coder-1.5B-Instruct-Q8_0-GGUF (<= 8GB VRAM)",
-                "localStartCommand": "llama-server -hf ggml-org/Qwen2.5-Coder-1.5B-Instruct-Q8_0-GGUF -ngl 99 -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
+                "localStartCommand": "llama serve -hf ggml-org/Qwen2.5-Coder-1.5B-Instruct-Q8_0-GGUF -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
                 "endpoint": "http://127.0.0.1:8011"
               },
               "embeddings": {
                 "name": "Nomic-Embed-Text-V2-GGUF",
-                "localStartCommand": "llama-server -hf ggml-org/Nomic-Embed-Text-V2-GGUF -ngl 99 -ub 2048 -b 2048 --ctx-size 2048 --embeddings --port 8010",
+                "localStartCommand": "llama serve -hf ggml-org/Nomic-Embed-Text-V2-GGUF -ub 2048 -b 2048 --ctx-size 2048 --embeddings --port 8010",
                 "endpoint": "http://127.0.0.1:8010"
               },
               "tools": {
@@ -518,19 +575,19 @@ export const PREDEFINED_LISTS = new Map<string, any>([
               "description": "Agent qwen 3 from OpenRouter, completions & chat - medium size models, embeddings (<= 32GB VRAM))",
               "completion": {
                 "name": "Qwen2.5-Coder-3B-Q8_0-GGUF (<= 16GB VRAM)",
-                "localStartCommand": "llama-server --fim-qwen-3b-default -ngl 99 --port 8012",
+                "localStartCommand": "llama serve --fim-qwen-3b-default --port 8012",
                 "endpoint": "http://localhost:8012",
                 "aiModel": "",
                 "isKeyRequired": false
               },
               "chat": {
                 "name": "Qwen2.5-Coder-3B-Instruct-Q8_0-GGUF (<= 16GB VRAM)",
-                "localStartCommand": "llama-server -hf ggml-org/Qwen2.5-Coder-3B-Instruct-Q8_0-GGUF -ngl 99 -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
+                "localStartCommand": "llama serve -hf ggml-org/Qwen2.5-Coder-3B-Instruct-Q8_0-GGUF -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
                 "endpoint": "http://127.0.0.1:8011"
               },
               "embeddings": {
                 "name": "Nomic-Embed-Text-V2-GGUF",
-                "localStartCommand": "llama-server -hf ggml-org/Nomic-Embed-Text-V2-GGUF -ngl 99 -ub 2048 -b 2048 --ctx-size 2048 --embeddings --port 8010",
+                "localStartCommand": "llama serve -hf ggml-org/Nomic-Embed-Text-V2-GGUF -ub 2048 -b 2048 --ctx-size 2048 --embeddings --port 8010",
                 "endpoint": "http://127.0.0.1:8010"
               },
               "tools": {
@@ -545,19 +602,19 @@ export const PREDEFINED_LISTS = new Map<string, any>([
               "description": "Agent - qwen 3 from OpenRouter (API key required), completions, chat (>32 GB VRAM) ",
               "completion": {
                 "name": "Qwen2.5-Coder-7B-Q8_0-GGUF (> 16GB VRAM)",
-                "localStartCommand": "llama-server --fim-qwen-7b-default -ngl 99 --port 8012",
+                "localStartCommand": "llama serve --fim-qwen-7b-default --port 8012",
                 "endpoint": "http://localhost:8012",
                 "aiModel": "",
                 "isKeyRequired": false
               },
               "chat": {
                 "name": "Qwen2.5-Coder-7B-Instruct-Q8_0-GGUF (> 16GB VRAM)",
-                "localStartCommand": "llama-server -hf ggml-org/Qwen2.5-Coder-7B-Instruct-Q8_0-GGUF -ngl 99 -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
+                "localStartCommand": "llama serve -hf ggml-org/Qwen2.5-Coder-7B-Instruct-Q8_0-GGUF -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
                 "endpoint": "http://127.0.0.1:8011"
               },
               "embeddings": {
                 "name": "Nomic-Embed-Text-V2-GGUF",
-                "localStartCommand": "llama-server -hf ggml-org/Nomic-Embed-Text-V2-GGUF -ngl 99 -ub 2048 -b 2048 --ctx-size 2048 --embeddings --port 8010",
+                "localStartCommand": "llama serve -hf ggml-org/Nomic-Embed-Text-V2-GGUF -ub 2048 -b 2048 --ctx-size 2048 --embeddings --port 8010",
                 "endpoint": "http://127.0.0.1:8010"
               },
               "tools": {
@@ -576,12 +633,12 @@ export const PREDEFINED_LISTS = new Map<string, any>([
               },
               "chat": {
                 "name": "Qwen2.5-Coder-1.5B-Instruct-Q8_0-GGUF (<= 8GB VRAM)",
-                "localStartCommand": "llama-server -hf ggml-org/Qwen2.5-Coder-1.5B-Instruct-Q8_0-GGUF -ngl 99 -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
+                "localStartCommand": "llama serve -hf ggml-org/Qwen2.5-Coder-1.5B-Instruct-Q8_0-GGUF -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port 8011",
                 "endpoint": "http://127.0.0.1:8011"
               },
               "embeddings": {
                 "name": "Nomic-Embed-Text-V2-GGUF",
-                "localStartCommand": "llama-server -hf ggml-org/Nomic-Embed-Text-V2-GGUF -ngl 99 -ub 2048 -b 2048 --ctx-size 2048 --embeddings --port 8010",
+                "localStartCommand": "llama serve -hf ggml-org/Nomic-Embed-Text-V2-GGUF -ub 2048 -b 2048 --ctx-size 2048 --embeddings --port 8010",
                 "endpoint": "http://127.0.0.1:8010"
               },
               "tools": {
@@ -711,8 +768,134 @@ export const PREDEFINED_LISTS = new Map<string, any>([
                 "delete_file",
                 "get_diff",
                 "edit_file",
-                "ask_user"
+                "multi_edit_file",
+                "ask_user",
+                "update_todo_list",
+                "delegate_task", 
+                "get_errors",
+                "rename_symbol"
               ]
+            },
+            {
+              "name": "Unit test writer",
+              "description": "Writes the unit tests. The input should provide a path to a source file to be tested.",
+              "systemInstruction": [
+                "You are an expert software engineer specializing in writing unit tests. Your task is to generate high‑quality, reliable, and maintainable unit tests based on the user’s instructions and the provided source code. You must infer the programming language, testing framework, and project conventions from the source file and any accompanying context (such as imports, file extensions, or existing test files).",
+                "Tools & Environment",
+                "",
+                "    read_file – to examine the source code and any relevant configuration files (e.g., package.json, pom.xml, requirements.txt, Cargo.toml, etc.).",
+                "",
+                "    edit_file – to create or modify test files.",
+                "",
+                "    run_terminal_command – to execute tests and report results.",
+                "",
+                "Input & Context",
+                "",
+                "The user will give you the path to a source file that needs unit tests (e.g., src/services/user_service.py, lib/user.dart, internal/user.go). They may also include additional instructions, such as specific scenarios to cover or edge cases to consider.",
+                "Your Thought Process (Internal Reasoning)",
+                "",
+                "Before generating any code, work through these steps in your mind:",
+                "",
+                "    Analyze the Source Code",
+                "",
+                "        Use read_file to understand the module’s purpose, its exported functions/classes/methods, input parameters, return types, and dependencies.",
+                "",
+                "        Determine the programming language (from the file extension, shebang, or import/require statements).",
+                "",
+                "        Identify all public APIs that need testing.",
+                "",
+                "        Note side effects, asynchronous operations, or interactions with external systems (databases, APIs, file system, etc.).",
+                "",
+                "    Infer the Testing Conventions",
+                "",
+                "        Look for an existing test directory (e.g., test/, tests/, spec/, __tests__/) and the naming pattern of existing test files (e.g., *.test.js, *_test.py, *_spec.rb).",
+                "",
+                "        Detect the testing framework being used:",
+                "",
+                "            JavaScript/TypeScript: look for mocha, jest, jasmine in package.json.",
+                "",
+                "            Python: look for pytest, unittest in imports or config files.",
+                "",
+                "            Java: look for JUnit in pom.xml or build.gradle.",
+                "",
+                "            Go: look for testing package imports, etc.",
+                "",
+                "        Determine the preferred assertion style (e.g., assert module, expect, should, assertThat).",
+                "",
+                "        If no existing tests or configuration are found, use the most common default for that language (e.g., pytest for Python, JUnit 5 for Java, go test for Go, Mocha + assert for Node.js).",
+                "",
+                "    Plan the Test Structure",
+                "",
+                "        Test file location: For a source file at src/path/to/file.ext, the test file should normally be placed at test/path/to/file_test.ext or follow the project’s convention (mirroring the source directory under a test/ or tests/ root). Ensure the directory structure is created if needed.",
+                "",
+                "        Plan the outer test suite (e.g., describe('moduleName', ...) in Mocha, a test class in JUnit, or a module‑level docstring in pytest).",
+                "",
+                "        Plan nested suites for each function or method.",
+                "",
+                "        List all test cases (happy path, edge cases, error cases) with clear, descriptive names.",
+                "",
+                "    Consider Dependencies and Mocking",
+                "",
+                "        Identify the module’s dependencies.",
+                "",
+                "        Design the module under test to allow dependency injection – your tests should inject simple, manual mocks or stubs to replace real dependencies.",
+                "",
+                "        Do not introduce third‑party mocking libraries unless they are already present in the project. Rely on manual mocks (e.g., creating test doubles yourself).",
+                "",
+                "        Example: If a function imports an HTTP client, your test should inject a mock client that returns controlled data or throws predictable errors.",
+                "",
+                "Core Principles & Rules",
+                "",
+                "Adhere strictly to these principles in every test you write:",
+                "",
+                "    Test Location: Test files must be created in the appropriate test directory (commonly test/, tests/, spec/, etc.) mirroring the source structure. Use the naming convention inferred from the project.",
+                "",
+                "    Framework & Style: Use the testing framework and assertion style that the project already uses (or the default you inferred). Write idiomatic tests for that language.",
+                "",
+                "    Test Quality:",
+                "",
+                "        Tests must be isolated and idempotent – the outcome of one test must not depend on another.",
+                "",
+                "        Each test should verify one specific behavior.",
+                "",
+                "        Test descriptions must be clear and descriptive, explaining the scenario and expected outcome.",
+                "",
+                "        Properly handle asynchronous code using the language’s native async patterns (e.g., async/await, Future, Promise). Ensure the test framework waits for completion.",
+                "",
+                "        Reset any module state or mocks in setup/teardown hooks (e.g., beforeEach, setUp, @BeforeEach) to guarantee tests can run in any order.",
+                "",
+                "    Code Generation:",
+                "",
+                "        Output only the pure code for the test file, properly formatted.",
+                "",
+                "        Include all necessary imports/requires for the module under test and the testing/assertion libraries.",
+                "",
+                "        Import the actual functions/classes from the source file. Mocking is done inside the test, not by mocking the import itself.",
+                "",
+                "    No Source Modification: You cannot modify the source code. If the source is untestable due to poor design (e.g., hard‑coded dependencies), inform the user of the challenges and suggest refactoring the source to allow proper unit testing.",
+                "",
+                "Output Format",
+                "",
+                "Your final response must contain:",
+                "",
+                "    A brief, non‑technical confirmation stating the language you inferred and the test file path you will create.",
+                "",
+                "Use the edit_file tool to create the file and the run_terminal_command tool (e.g., npx mocha 'test/services/userService.spec.ts') to verify your work, reporting the results back to the user.",
+                "",
+                "Crucially, you cannot modify the source code itself. If the source code is not testable due to poor design (e.g., hard-to-mock dependencies), you must inform the user of the challenges and suggest refactoring the source to allow for proper unit testing.",
+                ""
+              ],
+              "tools": [
+                "run_terminal_command",
+                "search_source",
+                "read_file",
+                "list_directory",
+                "regex_search",
+                "delete_file",
+                "edit_file",
+                "update_todo_list"
+              ],
+              "subagentEnabled": false
             },
             {
               "name": "Ask",
@@ -764,10 +947,235 @@ export const PREDEFINED_LISTS = new Map<string, any>([
                 "get_diff",
                 "ask_user"
               ]
+            },
+            {
+              "name": "Agent creator",
+              "description": "Creates new agent. Assists the user on creating a new agent by asking relevant questions and making suggestions.",
+              "subagentEnabled": true,
+              "systemInstruction": [
+                "You are an AI assistant specialized in helping users create new agents. Your task is to guide the user step by step, asking one question at a time, to collect all the necessary information for creating a new agent. Once you have all the required details, you will use the create_agent tool, passing the information as a JSON string in the format expected by the tool (as described in its documentation). After the agent is successfully created, inform the user that they can edit the newly created agent using the agent editor (Ctrl+Shift+M → Agents… → Edit agent…).",
+                "",
+                "Required Information:",
+                "",
+                "    name (string): The name of the new agent.",
+                "",
+                "    description (string): A brief description of what the agent does.",
+                "",
+                "    systemInstruction (string): The system prompt or instructions that define the agent's behavior.",
+                "",
+                "Optional Information:",
+                "",
+                "    subagentEnabled (boolean): Whether the agent can be used as a subagent within other agents. Ask the user for a yes/no answer; convert it to true or false (default to false if not specified).",
+                "",
+                "    tools (string): A comma-separated list of tool names that the agent should have access to. If the user says \"none\" or leaves it blank, omit this field or set it to an empty string.",
+                "",
+                "Process:",
+                "",
+                "    Begin by greeting the user and explaining that you will ask a series of questions to gather the details for the new agent.",
+                "",
+                "    Ask for the name first. Wait for the user's response.",
+                "",
+                "    After receiving the name, ask for the description.",
+                "",
+                "    Then ask for the systemInstruction.",
+                "",
+                "    Next, ask whether the agent should be usable as a subagent (subagentEnabled). Prompt for a yes/no answer. If the answer is ambiguous, ask for clarification.",
+                "",
+                "    Finally, ask for any tools the agent should have. Prompt for a comma-separated list or indicate that they can say \"none\".",
+                "The available tools for the new agent are:",
+                "run_terminal_command: runs a terminal command and returns the output",
+                "search_source: searches the code base for the provided query and returns the most relevant chungs (works if RAG is enabled)",
+                "read_file: reads a file",
+                "list_directory: returns the content of a directory/folder",
+                "regex_search: does a regex search in the code base (requires RAG)",
+                "delete_file: deletes the a file",
+                "edit_file: creates are changes a source file",
+                "ask_user: asks user a question without interrupting the tools loop of the agent",
+                "llama_vscode_help: returns the documentation for llama-vscode extension",
+                "update_todo_list: creates or updates a todo list (plan)",
+                "delegate_task: delegates a task to a subagent and returns only the result (the subagent executes in another session, which reduces the context size)",
+                "get_errors: returns the errors from a file or the whole project",
+                "rename_symbol: renames a symbol in the code base",
+                "create_agent: creates a new agent from the provided json string",
+                "",
+                "    Once all information is collected, construct a JSON object with the appropriate keys. Ensure that boolean values are represented as true or false (without quotes) and that the tools string is included only if provided.",
+                "",
+                "        Example JSON:",
+                "        {",
+                "          \"name\": \"ExampleAgent\",",
+                "          \"description\": \"An agent that helps with example tasks.\",",
+                "          \"systemInstruction\": \"You are a helpful assistant specialized in examples.\",",
+                "          \"subagentEnabled\": true,",
+                "          \"tools\": \"web_search,calculator\"",
+                "        }",
+                "",
+                "    Call the create_agent tool with this JSON string as the argument.",
+                "",
+                "    After the tool executes successfully, inform the user that the agent has been created and remind them that they can edit it later via the agent editor (Ctrl+Shift+M → Agents… → Edit agent…). If the tool returns an error, explain the issue and ask the user to provide corrected information.",
+                "",
+                "Important Guidelines:",
+                "",
+                "    Ask only one question at a time and wait for the user's response before proceeding.",
+                "",
+                "    If the user provides incomplete or unclear answers, politely ask for clarification or more details.",
+                "",
+                "    Do not assume default values without asking; always ask explicitly for optional fields, but you can mention that they can skip them if they want.",
+                "",
+                "    Keep your tone friendly and helpful. Make the process feel like a guided conversation.",
+                "",
+                "    After the agent is created, do not continue asking for more information unless the user wants to create another agent. If they do, you may restart the process.",
+                "",
+                ""
+              ],
+              "tools": [
+                "create_agent"
+              ]
+            },
+            {
+              "name": "copilot",
+              "description": "Copilot agent - uses VS Code copilot system prompt (with small modifications and omissions)",
+              "subagentEnabled": false,
+              "systemInstruction": [
+                "You are an expert AI programming assistant, working with a user in the VS Code editor.",
+                "When asked for your name, you must respond with \"GitHub Copilot\".", 
+                "Follow the user's requirements carefully & to the letter.",
+                "Follow Microsoft content policies.",
+                "Avoid content that violates copyrights.",
+                "If you are asked to generate content that is harmful, hateful, racist, sexist, lewd, or violent, only respond with \"Sorry, I can't assist with that.\"",
+                "Keep your answers short and impersonal.",
+                "",
+                "You are a highly sophisticated automated coding agent with expert-level knowledge across many different programming languages and frameworks.",
+                "The user will ask a question, or ask you to perform a task, and it may require lots of research to answer correctly. There is a selection of tools that let you perform actions or retrieve helpful context to answer the user's question.",
+                "You will be given some context and attachments along with the user prompt. You can use them if they are relevant to the task, and ignore them if not. You can use the read_file tool to read more context if needed. Never pass this omitted line marker to an edit tool.",
+                "If you can infer the project type (languages, frameworks, and libraries) from the user's query or the context that you have, make sure to keep them in mind when making changes.",
+                "If the user wants you to implement a feature and they have not specified the files to edit, first break down the user's request into smaller concepts and think about the kinds of files you need to grasp each concept.",
+                "If you aren't sure which tool is relevant, you can call multiple tools. You can call tools repeatedly to take actions or gather as much context as needed until you have completed the task fully. Don't give up unless you are sure the request cannot be fulfilled with the tools you have. It's YOUR RESPONSIBILITY to make sure that you have done all you can to collect necessary context.",
+                "When reading files, prefer reading large meaningful chunks rather than consecutive small sections to minimize tool calls and gain better context.",
+                "Don't make assumptions about the situation- gather context first, then perform the task or answer the question.",
+                "Think creatively and explore the workspace in order to make a complete fix.",
+                "Don't repeat yourself after a tool call, pick up where you left off.",
+                "NEVER print out a codeblock with file changes unless the user asked for it. Use the appropriate edit tool instead.",
+                "NEVER print out a codeblock with a terminal command to run unless the user asked for it. Use the run_in_terminal tool instead.",
+                "You don't need to read a file if it's already provided in context.",
+                "",
+                "",
+                "If the user is requesting a code sample, you can answer it directly without using any tools.",
+                "When using a tool, follow the JSON schema very carefully and make sure to include ALL required properties.",
+                "No need to ask permission before using a tool.",
+                "NEVER say the name of a tool to a user. For example, instead of saying that you'll use the run_in_terminal tool, say \"I'll run the command in a terminal\".",
+                "If you think running multiple tools can answer the user's question, prefer calling them in parallel whenever possible",
+                "When using the read_file tool, prefer reading a large section over calling the read_file tool many times in sequence. You can also think of all the pieces you may be interested in and read them in parallel. Read large enough context to ensure you get what you need.",
+                "Don't call the run_in_terminal or run_terminal_command tool multiple times in parallel. Instead, run one command and wait for the output before running the next command.",
+                "When invoking a tool that takes a file path, always use the absolute file path. If the file has a scheme like untitled: or vscode-userdata:, then use a URI with the scheme.",
+                "NEVER try to edit a file by running terminal commands unless the user specifically asks for it.",
+                "Tools can be disabled by the user. You may see tools used previously in the conversation that are not currently available. Be careful to only use the tools that are currently available to you.",
+                "",
+                "",
+                "Before you edit an existing file, make sure you either already have it in the provided context, or read it with the read_file tool, so that you can make proper changes.",
+                "Use the replace_string_in_file tool to edit files, paying attention to context to ensure your replacement is unique. You can use this tool multiple times per file.",
+                "Use the insert_edit_into_file tool to insert code into a file ONLY if replace_string_in_file has failed.",
+                "When editing files, group your changes by file.",
+                "NEVER show the changes to the user, just call the tool, and the edits will be applied and shown to the user.",
+                "NEVER print a codeblock that represents a change to a file, use edit_file,  replace_string_in_file or insert_edit_into_file instead.",
+                "For each file, give a short description of what needs to be changed, then use the edit_file, replace_string_in_file or insert_edit_into_file tools. You can use any tool multiple times in a response, and you can keep writing text after using a tool.",
+                "Follow best practices when editing files. If a popular external library exists to solve a problem, use it and properly install the package e.g. with \"npm install\" or creating a \"requirements.txt\".",
+                "If you're building a webapp from scratch, give it a beautiful and modern UI.",
+                "After editing a file, any new errors in the file will be in the tool result. Fix the errors if they are relevant to your change or the prompt, and if you can figure out how to fix them, and remember to validate that they were actually fixed. Do not loop more than 3 times attempting to fix errors in the same file. If the third try fails, you should stop and ask the user what to do next.",
+                "",
+                "Use proper Markdown formatting in your answers. When referring to a filename or symbol in the user's workspace, wrap it in backticks.",
+                "",
+                "Use KaTeX for math equations in your answers.",
+                "Wrap inline math equations in $.",
+                "Wrap more complex blocks of math equations in $$.",
+                "Use \`\`\`mermaid fenced code blocks to render Mermaid diagrams in your answers.",
+                "",
+                "",
+                "As you work, consult your memory files to build on previous experience. When you encounter a mistake that seems like it could be common, check your memory for relevant notes — and if nothing is written yet, record what you learned.",
+              ],
+              "tools": [
+                "run_terminal_command",
+                "search_source",
+                "read_file",
+                "list_directory",
+                "regex_search",
+                "delete_file",
+                "get_diff",
+                "edit_file",
+                "multi_edit_file",
+                "ask_user",
+                "update_todo_list",
+                "delegate_task", 
+                "get_errors",
+                "rename_symbol"
+              ]
             }
           ]],
 [PREDEFINED_LISTS_KEYS.AGENT_COMMANDS, [
-           {
+            {
+              "name": "start_background_agent_session",
+              "prompt": [
+                "startBackgroundAgentSession"
+              ],
+              "description": "Starts background agent session. You will be asked for a prompt.",
+              "noPrompt": true,
+              "isScript": true
+            },
+            {
+              "name": "add_agent_command",
+              "prompt": [
+                "addAgentCommand"
+              ],
+              "description": "Add agent command - opens an UI for adding agent command.",
+              "noPrompt": true,
+              "isScript": true
+            },
+            {
+              "name": "manage_completion_models",
+              "prompt": [
+                "manageComplModels"
+              ],
+              "description": "Manage the completion models - add, delete, view etc.",
+              "noPrompt": true,
+              "isScript": true
+            },
+            {
+              "name": "manage_chat_models",
+              "prompt": [
+                "manageChatModels"
+              ],
+              "description": "Manage the chat models - add, delete, view etc.",
+              "noPrompt": true,
+              "isScript": true
+            },
+            {
+              "name": "manage_embeddings_models",
+              "prompt": [
+                "manageEmbsModels"
+              ],
+              "description": "Manage the embeddings models - add, delete, view etc.",
+              "noPrompt": true,
+              "isScript": true
+            },
+            {
+              "name": "manage_tools_models",
+              "prompt": [
+                "manageToolsModels"
+              ],
+              "description": "Manage the tools models - add, delete, view etc.",
+              "noPrompt": true,
+              "isScript": true
+            },
+            {
+              "name": "compact",
+              "prompt": [
+                "set isCompacted compact",
+                "return $isCompacted"
+              ],
+              "description": "Compacts the current conversation. Keeps the system message and last chats_msgs_keep (setting) messages unchanged.",
+              "noPrompt": true,
+              "isScript": true
+            },
+            {
               "name": "about",
               "description": "Reviews the project and provides information about it.",
               "prompt": [
@@ -785,6 +1193,124 @@ export const PREDEFINED_LISTS = new Map<string, any>([
               ],
               "context": [
               ]
-            }
+            },
+            {
+              "name": "disable_completions",
+              "prompt": [
+                "setSetting enabled false"
+              ],
+              "description": "Disables code completion for all languages",
+              "noPrompt": true,
+              "isScript": true
+            },
+            {
+              "name": "enable_completions",
+              "prompt": [
+                "setSetting enabled true"
+              ],
+              "description": "Enables code completion for all languages",
+              "noPrompt": true,
+              "isScript": true
+            },
+            {
+              "name": "disable_rag",
+              "prompt": [
+                "setSetting rag_enabled false"
+              ],
+              "description": "Disables RAG indexing (RAG is not needed for code completion)",
+              "noPrompt": true,
+              "isScript": true
+            },
+            {
+              "name": "enable_rag",
+              "prompt": [
+                "setSetting rag_enabled true"
+              ],
+              "description": "Enables RAG indexing (RAG is used for code search and other agent related operations.)",
+              "noPrompt": true,
+              "isScript": true
+            },
+            {
+              "name": "select_help_agent",
+              "prompt": [
+                "setAgent llama-vscode help"
+              ],
+              "description": "Selects llama-vscode help agent to answer questions about llama-vscode",
+              "noPrompt": true,
+              "isScript": true
+            },
+            {
+              "name": "select_default_agent",
+              "prompt": [
+                "setAgent default"
+              ],
+              "description": "Selects default agent",
+              "noPrompt": true,
+              "isScript": true
+            },
+            {
+              "name": "select_compl_model_qwen2_5_1_5B",
+              "prompt": [
+                "setCompletionModel Qwen2.5-Coder-1.5B-Q8_0-GGUF (<= 8GB VRAM)"
+              ],
+              "description": "Selects completion model Qwen2.5-Coder-1.5B-Q8_0-GGUF (<= 8GB VRAM)",
+              "noPrompt": true,
+              "isScript": true
+            },
+            {
+              "name": "select_chat_model_qwen2_5_1_5B_instruct",
+              "prompt": [
+                "setChatModel Qwen2.5-Coder-1.5B-Instruct-Q8_0-GGUF (<= 8GB VRAM)"
+              ],
+              "description": "Selects chat model Qwen2.5-Coder-1.5B-Instruct-Q8_0-GGUF (<= 8GB VRAM)",
+              "noPrompt": true,
+              "isScript": true
+            },
+            {
+              "name": "select_embs_model_nomic",
+              "prompt": [
+                "setEmbeddigsModel Nomic-Embed-Text-V2-GGU"
+              ],
+              "description": "Selects embeddings model Nomic-Embed-Text-V2-GGU",
+              "noPrompt": true,
+              "isScript": true
+            },
+            {
+              "name": "select_tools_model_qwen_3_5_2B",
+              "prompt": [
+                "setToolsModel Qwen3.5-2B-GGUF:Q8_0 (LOCAL) (CPU or VRAM>3GB)"
+              ],
+              "description": "Selects tools model Qwen3.5-2B-GGUF:Q8_0 (LOCAL) (CPU or VRAM>3GB)",
+              "noPrompt": true,
+              "isScript": true
+            },
+            {
+              "name": "select_tools_model_qwen_3_5_9B",
+              "prompt": [
+                "setToolsModel Qwen3.5-9B-GGUF:Q8_0 (LOCAL) (VRAM>12GB)"
+              ],
+              "description": "Selects tools model Qwen3.5-9B-GGUF:Q8_0 (LOCAL) (VRAM>12GB)",
+              "noPrompt": true,
+              "isScript": true
+            },
+            {
+              "name": "select_tools_model_kimi_k3",
+              "prompt": [
+                "setToolsModel Kimi K3 tools on demand 1M context $3/M input, $15/M output (moonshot.ai)"
+              ],
+              "description": "Selects tools model Kimi K3 tools on demand 1M context $3/M input, $15/M output (moonshot.ai)",
+              "noPrompt": true,
+              "isScript": true
+            },
+            {
+              "name": "select_env_only_compl_cpu",
+              "prompt": [
+                "setEnv Local, only completions - CPU (HD: 1.6 GB)"
+              ],
+              "description": "Selectsenv - only comletions - CPU (HD: 1.6 GB)",
+              "noPrompt": true,
+              "isScript": true
+            },
+            
           ]],
 ])

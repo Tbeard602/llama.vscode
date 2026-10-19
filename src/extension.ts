@@ -11,10 +11,11 @@ export function activate(context: vscode.ExtensionContext) {
     app.architect.registerCommandCopyChunks(context);
     app.architect.registerCommandAskAi(context);
     app.architect.registerCommandAskAiWithContext(context);
-    app.architect.registerCommandAskAiWithTools(context);
+    app.architect.registerCommandSendPromptToAgent(context);
     app.architect.registerCommandNoCacheCompletion(context);
     app.architect.setOnSaveFile(context);
     app.architect.setPeriodicRingBufferUpdate(context);
+    app.architect.setPeriodicModelsHealthUpdate(context);
     app.architect.setClipboardEvents(context);
     app.architect.setOnChangeActiveFile(context);
     app.architect.registerCommandAcceptFirstLine(context);
@@ -28,12 +29,20 @@ export function activate(context: vscode.ExtensionContext) {
     app.architect.setOnChangeWorkspaceFolders(context)
     app.architect.registerGenarateCommitMsg(context)
     app.architect.registerCommandKillAgent(context)
+    app.architect.registerCommandOpenChangedFile(context)
     app.architect.registerWebviewProvider(context)
+    app.architect.registerUriHandler(context)
+    app.architect.registerCommandSelectNextSuggestion(context)
+    app.architect.registerCommandSelectPreviousSuggestion(context)
+    app.architect.registerLlavaVscodeModelProvider(context)
     app.architect.init()
+
+    
 }
 
 export async function deactivate() {
     // VS Code will dispose all registerd disposables
+    app.agentCommandScheduler.stop();
     app.llamaServer.killFimCmd();
     app.llamaServer.killChatCmd();
     app.llamaServer.killEmbeddingsCmd();

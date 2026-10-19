@@ -109,21 +109,25 @@ export class AgentService {
         return undefined;
     }
 
-    async selectAgent(agent: Agent): Promise<void> {
+    async selectAgent(agent: Agent, showInfo: boolean = true): Promise<void> {
         this.app.setAgent(agent);
         const allTools = Array.from(this.app.tools.toolsFunc.keys());
         for (let toolName of allTools) {
-            this.app.configuration.updateConfigValue(`tool_${toolName}_enabled`, agent.tools?.includes(toolName) ?? false);
+            try {
+                await this.app.configuration.updateConfigValue(`tool_${toolName}_enabled`, agent.tools?.includes(toolName) ?? false);
+            } catch (err) {
+                vscode.window.showErrorMessage("Error updating tools configuration.")
+            }
         }
         if (agent.toolsModel && agent.toolsModel.name) {
-            this.app.modelService.selectStartModel(agent.toolsModel, ModelType.Tools, this.app.modelService.getTypeDetails(ModelType.Tools))
+            await this.app.modelService.selectStartModel(agent.toolsModel, ModelType.Tools, this.app.modelService.getTypeDetails(ModelType.Tools))
         }
         await this.app.persistence.setValue(PERSISTENCE_KEYS.SELECTED_AGENT, agent);
         this.app.llamaWebviewProvider.updateLlamaView();
-        if (agent.name.trim() !== "") {
+        if (agent.name.trim() !== "" && showInfo) {
             vscode.window.showInformationMessage(`Agent ${agent.name} is selected.`);
         }
-    }
+    } 
 
     async deselectAgent(): Promise<void> {
         const emptyAgent = { name: "", systemInstruction: [] };
@@ -138,8 +142,8 @@ export class AgentService {
     }
 
     async addAgent(agentsList: Agent[], settingName: string): Promise<void> {
-        this.app.llamaWebviewProvider.showAgentEditor();
-        this.app.llamaWebviewProvider.addEditAgent({name: "", description: "", systemInstruction: [], tools: []})
+        this.app.llamaWebviewProvider.showAgentEditorInUi();
+        this.app.llamaWebviewProvider.addEditAgnt({name: "", description: "", systemInstruction: [], tools: []})
     }
 
     selectTools = async (currentTools: string[]): Promise<string[]> => {
@@ -151,14 +155,14 @@ export class AgentService {
             canPickMany: true,
             placeHolder: 'Select tools for the agent'
         });
-        const tools = selectedToolsItems ? selectedToolsItems.map(item => item.label) : Array.from(this.app.tools.toolsFunc.keys());
+        const tools = selectedToolsItems ? selectedToolsItems.map(item => item.label) : currentTools;
 
         return tools;
     }
 
     private async persistNewAgent(newAgent: Agent, agentsList: Agent[], settingName: string, confirmMessage: string): Promise<void> {
         let agentDetails = this.getAgentDetailsAsString(newAgent);
-        const shouldAddAgent = await Utils.confirmAction(confirmMessage, agentDetails);
+        const shouldAddAgent = await this.app.dialogs.confirmAction(confirmMessage, agentDetails);
 
         if (shouldAddAgent) {
             agentsList.push(newAgent);
@@ -169,12 +173,13 @@ export class AgentService {
 
     private async persistEditedAgent(editedAgent: Agent, agentsList: Agent[], settingName: string): Promise<void> {
         let agentDetails = this.getAgentDetailsAsString(editedAgent);
-        const shouldAddAgent = await Utils.confirmAction("Do you want to update agent?", agentDetails);
+        const shouldAddAgent = await this.app.dialogs.confirmAction("Do you want to update agent?", agentDetails);
         
         if (shouldAddAgent) {
             let agentExisting = agentsList.find(agn => agn.name.trim() == editedAgent.name.trim())
             if (agentExisting){
                 agentExisting.description = editedAgent.description
+                agentExisting.subagentEnabled = editedAgent.subagentEnabled
                 agentExisting.systemInstruction = editedAgent.systemInstruction
                 agentExisting.toolsModel = editedAgent.toolsModel
                 agentExisting.tools = editedAgent.tools
@@ -206,7 +211,7 @@ export class AgentService {
         const agentItem = await vscode.window.showQuickPick(agentsItems);
         if (agentItem) {
             let agentIndex = parseInt(agentItem.label.split(". ")[0], 10) - 1;
-            const shouldDeleteAgent = await Utils.confirmAction("Are you sure you want to delete the following agent?",
+            const shouldDeleteAgent = await this.app.dialogs.confirmAction("Are you sure you want to delete the following agent?",
                 this.getAgentDetailsAsString(agentsList[agentIndex])
             );
             if (shouldDeleteAgent) {
@@ -222,9 +227,9 @@ export class AgentService {
         const agentItem = await vscode.window.showQuickPick(agentsItems);
         if (agentItem) {
             let agentIndex = parseInt(agentItem.label.split(". ")[0], 10) - 1;
-            this.app.llamaWebviewProvider.showAgentEditor();
+            this.app.llamaWebviewProvider.showAgentEditorInUi();
             setTimeout(() => {
-                this.app.llamaWebviewProvider.addEditAgent(agentsList[agentIndex])
+                this.app.llamaWebviewProvider.addEditAgnt(agentsList[agentIndex])
             }, 500);
             
         }
@@ -238,7 +243,7 @@ export class AgentService {
         let agentItem = await vscode.window.showQuickPick(agentsItems);
         if (agentItem) {
             let agentIndex = parseInt(agentItem.label.split(". ")[0], 10) - 1;
-            this.app.llamaWebviewProvider.showAgentEditor();
+            this.app.llamaWebviewProvider.showAgentEditorInUi();
             const selectedAgent = allAgents[agentIndex];
             const newAgent: Agent = {
                 name: "Copy of " + agentItem.label,
@@ -247,28 +252,9 @@ export class AgentService {
                 tools: selectedAgent.tools
             }
             setTimeout(() => {
-                this.app.llamaWebviewProvider.addEditAgent(newAgent)
+                this.app.llamaWebviewProvider.addEditAgnt(newAgent)
             }, 500);
         }
-        
-        // let agentsItems: QuickPickItem[] = this.getStandardQpList(agentsList, "");
-        // agentsItems = agentsItems.concat(this.getStandardQpList(PREDEFINED_LISTS.get(PREDEFINED_LISTS_KEYS.AGENTS) as Agent[], "(predefined) ", agentsList.length));
-        // const agentItem = await vscode.window.showQuickPick(agentsItems);
-        // if (agentItem) {
-        //     let agentIndex = parseInt(agentItem.label.split(". ")[0], 10) - 1;
-        //     this.app.llamaWebviewProvider.showAgentEditor();
-        //     const selectedAgent = agentsList[agentIndex];
-        //     const newAgent: Agent = {
-        //         name: "Copyt of " + selectedAgent.name,
-        //         description: selectedAgent.description,
-        //         systemInstruction: selectedAgent.systemInstruction,
-        //         tools: selectedAgent.tools
-        //     }
-        //     setTimeout(() => {
-        //         this.app.llamaWebviewProvider.addEditAgent(newAgent)
-        //     }, 500);
-            
-       // }
     }
 
     async viewAgent(agentsList: Agent[]): Promise<void> {
@@ -285,7 +271,7 @@ export class AgentService {
 
     public async showAgentDetails(selectedAgent: Agent) {
         let agentDetails = this.getAgentDetailsAsString(selectedAgent);
-        await Utils.showOkDialog(agentDetails);
+        await this.app.dialogs.showOkDialog(agentDetails);
     }
 
     async exportAgent(agentsList: Agent[]): Promise<void> {
@@ -296,7 +282,7 @@ export class AgentService {
         if (agentItem) {
             let agentIndex = parseInt(agentItem.label.split(". ")[0], 10) - 1;
             let selectedAgent = allAgents[agentIndex];
-            let shouldExport = await Utils.showYesNoDialog("Do you want to export the following agent? \n\n" +
+            let shouldExport = await this.app.dialogs.showYesNoDialog("Do you want to export the following agent? \n\n" +
                 this.getAgentDetailsAsString(selectedAgent)
             );
 
@@ -357,6 +343,7 @@ export class AgentService {
             "\nname: " + agent.name +
             "\ndescription: " + agent.description +
             "\nsystem prompt: \n" + agent.systemInstruction.join("\n") +
+            "\nsubagent enabled: " + agent.subagentEnabled +
             "\ntools model: \n" + agent.toolsModel?.name +
             "\n\ntools: " + (agent.tools ? agent.tools.join(", ") : "");
     }
@@ -389,5 +376,10 @@ export class AgentService {
 
     getEditedAgentTools = () => {
         return this.editedAgentTools;
+    }
+
+    getAllAgentsList = (): Agent[] => {
+        return this.app.configuration.agents_list
+                .concat((PREDEFINED_LISTS.get(PREDEFINED_LISTS_KEYS.AGENTS) as Agent[]))
     }
 }

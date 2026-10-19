@@ -1,22 +1,53 @@
-import axios from "axios";
+import axios, { AxiosRequestConfig } from "axios";
 import {Application} from "./application";
 import vscode, { Terminal } from "vscode";
 import { LlmModel, LlamaChatResponse, LlamaResponse, ChatMessage } from "./types";
 import { Utils } from "./utils";
 import * as cp from 'child_process';
 import * as util from 'util';
+import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
-import { SUPPORTED_IMG_FILE_EXTS } from "./constants";
+import { ModelType, PERSISTENCE_KEYS, SUPPORTED_IMG_FILE_EXTS } from "./constants";
+import {
+    buildRuntimePropsUrl,
+    estimateTokenCount,
+    extractRuntimeContextSize,
+    isLikelyLlamaCppProvider,
+    OpenAICompatibleModel,
+    resolveModelTokenLimits,
+    ResolvedModelTokenLimits,
+} from './language-model-token-limits';
 
 const STATUS_OK = 200;
 
 export interface LlamaToolsResponse {
     choices: [{
-        message:{content?: string, tool_calls?:[{id:string, function: {name:string, arguments: string}}]},
+        message:{role?: string, content?: string | null, tool_calls?:[{id:string, function: {name:string, arguments: string}}]},
         finish_reason?: string,
-        
+        error?: LlamaApiError,
     }];
+    error?: LlamaApiError;
+    truncated?: boolean;
+    tokens_cached?: number;
+    timings?: LlamaResponse['timings'];
+    generation_settings?: LlamaResponse['generation_settings'];
+    usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        total_tokens?: number;
+        prompt_tokens_details?:any
+        cost?:number
+        cost_usd?:number
+    };
+}
+
+interface LlamaApiError {
+    message: string;
+    type?: string;
+    n_prompt_tokens?: number;
+    n_ctx?: number;
+    [key: string]: unknown;
 }
 
 export interface LlamaEmbeddingsResponse {
@@ -35,6 +66,48 @@ export interface LlamaEmbeddingsResponse {
     ]
 }
 
+interface ApplyTemplateResponse {
+    prompt: string;
+}
+
+interface CounTokensResponse {
+    input_tokens: number;
+}
+
+interface TokenizeResponse {
+    tokens: unknown[];
+}
+
+interface OpenAIModelsResponse {
+    data: OpenAICompatibleModel[];
+}
+
+interface RequestDetailsOverride {
+    endpoint: string;
+    model?: string;
+    requestConfig?: AxiosRequestConfig;
+    trace?: RequestTraceContext;
+    tools?: unknown[];
+    toolChoice?: unknown;
+}
+
+interface ResolvedRequestDetails {
+    endpoint: string;
+    model: string;
+    requestConfig: AxiosRequestConfig;
+    selectedModel: LlmModel;
+    trace?: RequestTraceContext;
+    tools?: unknown[];
+    toolChoice?: unknown;
+}
+
+export interface RequestTraceContext {
+    requestId: string;
+    caller: string;
+    conversationId?: string;
+    conversationTurn?: number;
+}
+
 export class LlamaServer {
     private app: Application
     private vsCodeFimTerminal: Terminal | undefined;
@@ -44,6 +117,10 @@ export class LlamaServer {
     private vsCodeCommandTerminal: Terminal | undefined;
     private vsCodeToolsTerminal: Terminal | undefined;
     private aiModel = "";
+    private requestTraceCounter = 0;
+    private toolsTokenLimitsCache:
+        | { key: string; expiresAt: number; limits: ResolvedModelTokenLimits }
+        | undefined;
     private readonly defaultRequestParams = {
         top_k: 40,
         top_p: 0.99,
@@ -109,6 +186,7 @@ export class LlamaServer {
     private createRequestPayload(noPredict: boolean, inputPrefix: string, inputSuffix: string, chunks: any[], prompt: string, model: string, nindent?: number) {
         if (noPredict) {
             return {
+                id_slot: 0,
                 input_prefix: inputPrefix,
                 input_suffix: inputSuffix,
                 input_extra: chunks,
@@ -123,11 +201,13 @@ export class LlamaServer {
         }
 
         return {
+            id_slot: 0,
             input_prefix: inputPrefix,
             input_suffix: inputSuffix,
             input_extra: chunks,
             prompt,
             n_predict: this.app.configuration.n_predict,
+            n_cmpl: this.app.configuration.max_parallel_completions,
             ...this.defaultRequestParams,
             ...(nindent && { n_indent: nindent }),
             t_max_prompt_ms: this.app.configuration.t_max_prompt_ms,
@@ -146,7 +226,7 @@ export class LlamaServer {
             "messages": [
               {
                 "role": "system",
-                "content": "You are an expert coder."
+                "content": "You are an expert coder.\n" + context
               },
               {
                 "role": "user",
@@ -235,15 +315,75 @@ export class LlamaServer {
           };
     }
 
-    private createToolsRequestPayload(messages: ChatMessage[], model: string, stream = false, imagePath: string = "") {
-        this.app.tools.addSelectedTools();
-        let filteredMsgs = this.filterThoughtFromMsgs(messages)
-        
-        // Add image with base64 encoding
+    private getToolsRequestDetails(): ResolvedRequestDetails {
+        const selectedModel: LlmModel = this.app.getToolsModel();
+        let model = this.app.configuration.ai_model;
+        if (selectedModel?.aiModel) {
+            model = selectedModel.aiModel;
+        }
+
+        let endpoint = this.app.configuration.endpoint_tools;
+        if (selectedModel?.endpoint) {
+            endpoint = selectedModel.endpoint;
+        }
+
+        let requestConfig = this.app.configuration.axiosRequestConfigTools;
+        if (selectedModel?.isKeyRequired) {
+            const apiKey = this.app.persistence.getApiKey(selectedModel.endpoint ?? "");
+            if (apiKey) {
+                requestConfig = {
+                    headers: {
+                        Authorization: `Bearer ${apiKey}`,
+                        "Content-Type": "application/json",
+                        ...(selectedModel.endpoint?.includes("orcarouter.ai") ? { "X-OrcaRouter-Include-Cost": true } : {}),
+                    },
+                };
+            } 
+        }
+
+        return {
+            endpoint,
+            model,
+            requestConfig,
+            selectedModel,
+        };
+    }
+
+    createRequestTrace(caller: string): RequestTraceContext {
+        this.requestTraceCounter += 1;
+        return {
+            requestId: `${caller}-${Date.now().toString(36)}-${this.requestTraceCounter.toString(36)}`,
+            caller,
+        };
+    }
+
+    private resolveRequestDetails(override?: RequestDetailsOverride): ResolvedRequestDetails {
+        const details = this.getToolsRequestDetails();
+        if (!override) {
+            return {
+                ...details,
+                trace: undefined,
+            };
+        }
+
+        return {
+            ...details,
+            endpoint: override.endpoint,
+            model: override.model ?? details.model,
+            requestConfig: override.requestConfig ?? details.requestConfig,
+            trace: override.trace,
+            tools: override.tools,
+            toolChoice: override.toolChoice,
+        };
+    }
+
+    private buildToolsMessages(messages: ChatMessage[], imagePath = "") {
+        let filteredMsgs = this.filterThoughtFromMsgs(messages);
+
         if (imagePath && fs.existsSync(imagePath)) {
-            
-            var imgType = ""
-            for (var suffix in SUPPORTED_IMG_FILE_EXTS){
+
+            let imgType = "";
+            for (const suffix in SUPPORTED_IMG_FILE_EXTS){
                 if (imagePath.endsWith(suffix)) {
                     imgType = SUPPORTED_IMG_FILE_EXTS[suffix];
                     break;
@@ -267,28 +407,398 @@ export class LlamaServer {
                         }
                     ]
                 };
-                filteredMsgs = (filteredMsgs as any[])
+                filteredMsgs = filteredMsgs as any[];
                 filteredMsgs.push(imageMessage);
             }
         }
+
+        return filteredMsgs;
+    }
+
+    private getOnlyNewTools(newTools: any, messages: ChatMessage[]): any {
+        let sentToolsNames = new Set<string>()
+        for (const msg of messages){
+            if (msg.role == "system" && msg.tools) {
+                for (const tool of msg.tools) {
+                    sentToolsNames.add(tool.function.name);
+                }
+            }
+        }
+
+        let uniqueTools = []
+        for (const tool of newTools){
+            if (!sentToolsNames.has(tool.function.name)){
+                uniqueTools.push(tool)
+                sentToolsNames.add(tool.function.name)
+            }
+        }
+
+        return uniqueTools;
+    }
+
+
+    private createToolsRequestPayload(messages: ChatMessage[], model: string, stream = false, imagePath: string = "", iterationsCount = 0, endpoint = "") {
+        this.app.tools.addSelectedTools();
+        let toolChoice = "auto";
+        let allTools = [...this.app.tools.getTools(),  ...this.app.tools.vscodeTools]
         
+        if (model.trim() == "kimi-k3" && endpoint.toLowerCase().includes("api.moonshot.ai")) {
+            allTools = [this.app.tools.getSearchToolsTool()];
+            if (iterationsCount == 1) toolChoice = "required"
+            else if (this.app.tools.getLastSearchToolsResult().length > 0) {
+                const newTools = this.getOnlyNewTools(this.app.tools.getLastSearchToolsResult(), messages)
+                if (newTools) {
+                    const systemToolsMsg = {
+                            "role": "system",
+                            "tools": newTools
+                            }
+                    messages.push(systemToolsMsg);
+                    }
+            }
+        } 
+        let filteredMsgs = this.buildToolsMessages(messages, imagePath);
+        
+        
+
         return {
             "messages": filteredMsgs,
             "stream": stream,
-            "temperature": 0.8,
-            "top_p": 0.95,
-            ...(model.trim() != "" && { model: model}),
-            "tools": [...this.app.tools.getTools(),  ...this.app.tools.vscodeTools],
-            "tool_choice": "auto"
+            ...(stream && { stream_options: { include_usage: true } }),
+            ...(model.trim() != "" && { model: model }),
+            "tools": allTools,
+            "tool_choice": toolChoice
         };
     }
 
-    private createGetSummaryRequestPayload(messages: ChatMessage[], model: string) {
+    private summarizeTemplateMessages(messages: unknown[]): string {
+        const roles = messages.map((message, index) => {
+            if (!message || typeof message !== 'object') {
+                return `${index}:invalid`;
+            }
+
+            const role = (message as { role?: unknown }).role;
+            return `${index}:${typeof role === 'string' ? role : 'missing-role'}`;
+        });
+
+        const result = `count=${messages.length}; roles=[${roles.join(', ')}]`;
+        return result;
+    }
+
+    private formatTraceDetails(trace?: RequestTraceContext): string {
+        if (!trace) {
+            return '';
+        }
+
+        return [
+            `request_id=${trace.requestId}`,
+            `caller=${trace.caller}`,
+            trace.conversationId ? `conversation_id=${trace.conversationId}` : '',
+            typeof trace.conversationTurn === 'number' ? `conversation_turn=${trace.conversationTurn}` : '',
+        ].filter(Boolean).join(' | ');
+    }
+
+    private logApiRequest(label: string, method: string, url: string, details = "", trace?: RequestTraceContext) {
+        this.app.logger.addEventLog('API', `${label}_${method}_REQUEST`, [url, this.formatTraceDetails(trace), details].filter(Boolean).join(' | '));
+    }
+
+    private logApiResponse(label: string, method: string, url: string, details = "", trace?: RequestTraceContext) {
+        this.app.logger.addEventLog('API', `${label}_${method}_RESPONSE`, [url, this.formatTraceDetails(trace), details].filter(Boolean).join(' | '));
+    }
+
+    private formatUsageLogDetails(usage: Record<string, unknown> | undefined, tokensCached?: number): string[] {
+        const completionTokenDetails = this.getUsageRecordField(usage, 'completion_tokens_details');
+        const promptTokenDetails = this.getUsageRecordField(usage, 'prompt_tokens_details');
+        const cachedPromptTokens = this.getUsageNumberField(promptTokenDetails, 'cached_tokens');
+
+        return [
+            `prompt_tokens=${this.getUsageNumberField(usage, 'prompt_tokens') ?? 'unknown'}`,
+            `completion_tokens=${this.getUsageNumberField(usage, 'completion_tokens') ?? 'unknown'}`,
+            `total_tokens=${this.getUsageNumberField(usage, 'total_tokens') ?? 'unknown'}`,
+            `reasoning_tokens=${this.getUsageNumberField(completionTokenDetails, 'reasoning_tokens') ?? 'unknown'}`,
+            `cached_prompt_tokens=${cachedPromptTokens ?? tokensCached ?? 'unknown'}`,
+        ];
+    }
+
+    private getUsageRecordField(record: Record<string, unknown> | undefined, field: string): Record<string, unknown> | undefined {
+        const value = record?.[field];
+        return value && typeof value === 'object' ? value as Record<string, unknown> : undefined;
+    }
+
+    private getUsageNumberField(record: Record<string, unknown> | undefined, field: string): number | undefined {
+        const value = record?.[field];
+        return typeof value === 'number' ? value : undefined;
+    }
+
+    private logApiError(label: string, method: string, url: string, error: unknown, details = "", trace?: RequestTraceContext) {
+        const apiError = this.extractApiError(error);
+        this.app.logger.addEventLog(
+            'API',
+            `${label}_${method}_ERROR`,
+            [url, this.formatTraceDetails(trace), details, `error=${apiError.message}`].filter(Boolean).join(' | ')
+        );
+    }
+
+    logBudgetDecision(
+        trace: RequestTraceContext,
+        details: {
+            endpoint: string;
+            model: string;
+            promptTokens?: number;
+            promptCountSource: 'exact' | 'fallback';
+            maxInputTokens: number;
+            maxOutputTokens: number;
+            chosenMaxTokens: number;
+            safetyMarginTokens: number;
+        }
+    ) {
+        this.app.logger.addEventLog(
+            'BUDGET',
+            'REQUEST_DECISION',
+            [
+                this.formatTraceDetails(trace),
+                `endpoint=${details.endpoint}`,
+                `model=${details.model || 'none'}`,
+                `prompt_tokens=${details.promptTokens ?? 'unknown'}`,
+                `prompt_count_source=${details.promptCountSource}`,
+                `max_input_tokens=${details.maxInputTokens}`,
+                `max_output_tokens=${details.maxOutputTokens}`,
+                `chosen_max_tokens=${details.chosenMaxTokens}`,
+                `safety_margin_tokens=${details.safetyMarginTokens}`,
+            ].join(' | ')
+        );
+    }
+
+    logBudgetFallback(
+        trace: RequestTraceContext,
+        details: {
+            endpoint: string;
+            model: string;
+            fallbackPromptTokens: number;
+            fallbackReason: string;
+        }
+    ) {
+        this.app.logger.addEventLog(
+            'BUDGET',
+            'EXACT_COUNT_FALLBACK',
+            [
+                this.formatTraceDetails(trace),
+                `endpoint=${details.endpoint}`,
+                `model=${details.model || 'none'}`,
+                `fallback_prompt_tokens=${details.fallbackPromptTokens}`,
+                `reason=${details.fallbackReason}`,
+            ].join(' | ')
+        );
+    }
+
+    async getToolsModelTokenLimits(): Promise<ResolvedModelTokenLimits> {
+        const { endpoint, model, requestConfig } = this.getToolsRequestDetails();
+        const cacheKey = [
+            endpoint,
+            model,
+            this.app.configuration.ai_api_version,
+            this.app.configuration.lm_max_input_tokens,
+            this.app.configuration.lm_max_output_tokens,
+        ].join('|');
+
+        if (this.toolsTokenLimitsCache
+            && this.toolsTokenLimitsCache.key === cacheKey
+            && this.toolsTokenLimitsCache.expiresAt > Date.now()) {
+            return this.toolsTokenLimitsCache.limits;
+        }
+
+        const configuredMaxInputTokens = this.app.configuration.lm_max_input_tokens;
+        const configuredMaxOutputTokens = this.app.configuration.lm_max_output_tokens;
+
+        const fallbackLimits = resolveModelTokenLimits(
+            { id: model || 'tools-model' },
+            {
+                configuredMaxInputTokens,
+                configuredMaxOutputTokens,
+            }
+        );
+
+        if (!endpoint) {
+            return fallbackLimits;
+        }
+
+        const modelsUrl = `${Utils.trimTrailingSlash(endpoint)}/${this.app.configuration.ai_api_version}/models`;
+
+        try {
+            this.logApiRequest('TOOLS_MODELS', 'GET', modelsUrl, `model=${model || 'none'}`);
+            const response = await axios.get<OpenAIModelsResponse>(
+                modelsUrl,
+                requestConfig
+            );
+            this.logApiResponse('TOOLS_MODELS', 'GET', modelsUrl, `count=${response.data?.data?.length ?? 0}`);
+
+            const models = response.data?.data ?? [];
+            const matchedModel =
+                models.find((candidate) => candidate.id === model)
+                ?? (models.length === 1 ? models[0] : undefined);
+
+            if (!matchedModel) {
+                return fallbackLimits;
+            }
+
+            let runtimeContextSize: number | undefined;
+            if (configuredMaxInputTokens <= 0 && isLikelyLlamaCppProvider([matchedModel])) {
+                try {
+                    const propsUrl = models.length === 1
+                        ? buildRuntimePropsUrl(endpoint)
+                        : buildRuntimePropsUrl(endpoint, matchedModel.id);
+                    this.logApiRequest('TOOLS_PROPS', 'GET', propsUrl, `model=${matchedModel.id}`);
+                    const propsResponse = await axios.get(propsUrl, requestConfig);
+                    runtimeContextSize = extractRuntimeContextSize(propsResponse.data);
+                    this.logApiResponse('TOOLS_PROPS', 'GET', propsUrl, `n_ctx=${runtimeContextSize ?? 'unknown'}`);
+                } catch (error) {
+                    this.logApiError('TOOLS_PROPS', 'GET', models.length === 1 ? buildRuntimePropsUrl(endpoint) : buildRuntimePropsUrl(endpoint, matchedModel.id), error, `model=${matchedModel.id}`);
+                    runtimeContextSize = undefined;
+                }
+            }
+
+            const limits = resolveModelTokenLimits(matchedModel, {
+                configuredMaxInputTokens,
+                configuredMaxOutputTokens,
+                runtimeContextSize,
+            });
+
+            this.toolsTokenLimitsCache = {
+                key: cacheKey,
+                expiresAt: Date.now() + 30000,
+                limits,
+            };
+
+            return limits;
+        } catch (error) {
+            this.logApiError('TOOLS_MODELS', 'GET', modelsUrl, error, `model=${model || 'none'}`);
+            return fallbackLimits;
+        }
+    }
+
+    async applyToolsTemplate(
+        messages: ChatMessage[],
+        imagePath = "",
+        requestDetails?: RequestDetailsOverride
+    ): Promise<string | undefined> {
+        const { endpoint, model, requestConfig, trace, tools, toolChoice } = this.resolveRequestDetails(requestDetails);
+        if (!endpoint) {
+            return undefined;
+        }
+
+        const templateMessages = this.buildToolsMessages(messages, imagePath);
+        const templateUrl = `${Utils.trimTrailingSlash(endpoint)}/apply-template`;
+
+        try {
+            this.logApiRequest('APPLY_TEMPLATE', 'POST', templateUrl, `model=${model || 'none'} | ${this.summarizeTemplateMessages(templateMessages as unknown[])}`, trace);
+            const response = await axios.post<ApplyTemplateResponse>(
+                templateUrl,
+                {
+                    messages: templateMessages,
+                    ...(model.trim() !== '' && { model }),
+                    ...(tools?.length && { tools }),
+                    ...(toolChoice !== undefined && { tool_choice: toolChoice }),
+                },
+                requestConfig
+            );
+
+            this.logApiResponse('APPLY_TEMPLATE', 'POST', templateUrl, `prompt_length=${response.data.prompt?.length ?? 0}`, trace);
+
+            return response.status === STATUS_OK ? response.data.prompt : undefined;
+        } catch (error) {
+            const apiError = this.extractApiError(error);
+            const details = [
+                `endpoint=${endpoint}`,
+                `model=${model || 'none'}`,
+                 this.summarizeTemplateMessages(templateMessages as unknown[]),
+                `error=${apiError}`,
+            ].join(' | ');
+
+            this.logApiError('APPLY_TEMPLATE', 'POST', templateUrl, error, `model=${model || 'none'} | ${this.summarizeTemplateMessages(templateMessages as unknown[])}`, trace);
+            this.app.logger.addEventLog('TOOLS', 'APPLY_TEMPLATE_ERROR', details);
+            console.error('[llama-vscode] apply-template failed:', details);
+            return undefined;
+        }
+    }
+
+    async countToolsPromptTokens(
+        messages: ChatMessage[],
+        imagePath = "",
+        requestDetails?: RequestDetailsOverride
+    ): Promise<number | undefined> {
+        return this.countTextTokens(messages, requestDetails);
+    }
+
+    async countTextTokens(messages: ChatMessage[], requestDetails?: RequestDetailsOverride): Promise<number | undefined> {
+        const { endpoint, requestConfig, trace } = this.resolveRequestDetails(requestDetails);
+        if (!endpoint) {
+            return undefined;
+        }
+
+        const countTokensUrl = `${Utils.trimTrailingSlash(endpoint)}/${this.app.configuration.ai_api_version}/messages/count_tokens`;
+
+        try {
+            this.logApiRequest('TOKENIZE', 'POST', countTokensUrl, `messages_length=${messages.length}`, trace);
+            const response = await axios.post<CounTokensResponse>(
+                countTokensUrl,
+                {
+                    model: requestDetails?.model ?? this.app.configuration.ai_model,
+                    system: "",
+                    messages: messages,
+
+                },
+                requestConfig
+            );
+            this.logApiResponse('TOKENIZE', 'POST', countTokensUrl, `tokens=${response.data.input_tokens}`, trace);
+
+            return response.status === STATUS_OK ? response.data.input_tokens : undefined;
+        } catch (error) {
+            this.logApiError('TOKENIZE', 'POST', countTokensUrl, error, `messages_length=${messages.length}`, trace);
+            return undefined;
+        }
+    }
+
+    estimateToolsRequestTokens(requestPayload: unknown): number {
+        // Fallback only: exact prompt counting should go through apply-template + tokenize.
+        return estimateTokenCount(requestPayload);
+    }
+
+    private createErrorResponse(error: LlamaApiError): LlamaToolsResponse {
+        return {
+            choices: [{
+                message: { role: 'assistant', content: error.message },
+                finish_reason: 'error',
+                error,
+            }],
+            error,
+        };
+    }
+
+    private extractApiError(error: unknown): LlamaApiError {
+        if (axios.isAxiosError(error)) {
+            const responseData = error.response?.data as { error?: LlamaApiError } | undefined;
+            if (responseData?.error) {
+                return responseData.error;
+            }
+
+            return {
+                message: error.message,
+                ...(typeof error.response?.status === 'number' && { status: error.response.status }),
+            };
+        }
+
+        if (error instanceof Error) {
+            return { message: error.message };
+        }
+
+        return { message: String(error) };
+    }
+
+private createGetSummaryRequestPayload(messages: ChatMessage[], model: string) {
         let filteredMsgs = this.filterThoughtFromMsgs(messages)
         const summaryPromptMsgs: ChatMessage[] = [
             {
-            role: 'system',
-            content: `Summarize the conversation concisely, preserving technical details and code solutions.`
+                role: 'system',
+                content: this.app.prompts.SUMMARIZE_PROMPT,
             },
             ...filteredMsgs
         ];
@@ -316,15 +826,19 @@ export class LlamaServer {
 
         // else, default to llama.cpp
         let { endpoint, model, requestConfig } = this.getComplModelProperties();
-        if (!endpoint) { 
+        if (!endpoint){
+            await this.app.modelService.selectDefaultModel(ModelType.Completion, PERSISTENCE_KEYS.DEFAULT_COMPL_MODEL);
+            ({ endpoint, model, requestConfig } = this.getComplModelProperties());
+        }
+        if (!endpoint) {
             const selectionMessate =  "Select a completion model or an env with completion model to use code completion (code suggestions by AI)."
-            const shouldSelectModel = await Utils.showUserChoiceDialog(selectionMessate, "Select")
+            const shouldSelectModel = await this.app.dialogs.showUserChoiceDialog(selectionMessate, "Select")
             if (shouldSelectModel){
-                this.app.llamaWebviewProvider.showEnvView();
+                this.app.llamaWebviewProvider.showEnvViewInUi();
                 vscode.window.showInformationMessage("After the completion model is loaded, try again using code completion.")
                 return;
             } else {
-                const shouldDisable = await Utils.showYesNoDialog("Do you want to disable completions? (You could enable them from llama-vscode menu.)")
+                const shouldDisable = await this.app.dialogs.showYesNoDialog("Do you want to disable completions? (You could enable them from llama-vscode menu.)")
                 if (shouldDisable) {
                     await this.app.menu.setCompletion(false);
                     vscode.window.showInformationMessage("The completions are disabled. You could enable them from llama-vscode menu.")
@@ -334,11 +848,14 @@ export class LlamaServer {
             }
         }
 
+        const infillUrl = `${Utils.trimTrailingSlash(endpoint)}/infill`;
+        this.logApiRequest('FIM', 'POST', infillUrl, `model=${model || 'none'} | prompt_length=${prompt.length}`);
         const response = await axios.post<LlamaResponse>(
-            `${Utils.trimTrailingSlash(endpoint)}/infill`,
+            infillUrl,
             this.createRequestPayload(false, inputPrefix, inputSuffix, chunks, prompt, model, nindent),
             requestConfig
         );
+        this.logApiResponse('FIM', 'POST', infillUrl, `has_content=${response.data?.content !== undefined}`);
 
         return response.status === STATUS_OK ? response.data : undefined;
     };
@@ -350,14 +867,17 @@ export class LlamaServer {
         chunks: any,
         nindent: number
     ): Promise<LlamaChatResponse | undefined> => {
-        
+
         let { endpoint, model, requestConfig } = this.getChatModelProperties();
 
+        const chatUrl = `${Utils.trimTrailingSlash(endpoint)}/${this.app.configuration.ai_api_version}/chat/completions`;
+        this.logApiRequest('CHAT_EDIT', 'POST', chatUrl, `model=${model || 'none'}`);
         const response = await axios.post<LlamaChatResponse>(
-            `${Utils.trimTrailingSlash(endpoint)}/${this.app.configuration.ai_api_version}/chat/completions`,
+            chatUrl,
             this.createChatEditRequestPayload(instructions, originalText, context, model),
             requestConfig
         );
+        this.logApiResponse('CHAT_EDIT', 'POST', chatUrl, `has_choices=${response.data?.choices?.length ?? 0}`);
 
         return response.status === STATUS_OK ? response.data : undefined;
     };
@@ -367,11 +887,14 @@ export class LlamaServer {
     ): Promise<LlamaChatResponse | undefined> => {
         let { endpoint, model, requestConfig } = this.getChatModelProperties();
 
+        const chatUrl = `${Utils.trimTrailingSlash(endpoint)}/${this.app.configuration.ai_api_version}/chat/completions`;
+        this.logApiRequest('CHAT', 'POST', chatUrl, `model=${model || 'none'} | prompt_length=${prompt.length}`);
         const response = await axios.post<LlamaChatResponse>(
-            `${Utils.trimTrailingSlash(endpoint)}/${this.app.configuration.ai_api_version}/chat/completions`,
+            chatUrl,
             this.createChatRequestPayload(prompt, model),
             requestConfig
         );
+        this.logApiResponse('CHAT', 'POST', chatUrl, `has_choices=${response.data?.choices?.length ?? 0}`);
 
         return response.status === STATUS_OK ? response.data : undefined;
     };
@@ -380,51 +903,43 @@ export class LlamaServer {
         messages: ChatMessage[],
         isSummarization = false,
         onDelta?: (delta: string) => void,
-        abortSignal?: AbortSignal, 
-        imagePath = ""
+        abortSignal?: AbortSignal,
+        imagePath = "",
+        iterationsCount = 0
     ): Promise<LlamaToolsResponse | undefined> => {
-        let selectedModel: LlmModel = this.app.getToolsModel();
-        let model = this.app.configuration.ai_model;
-        if (selectedModel?.aiModel !== undefined && selectedModel.aiModel) model = selectedModel.aiModel;
-
-        let endpoint = this.app.configuration.endpoint_tools;
-        if (selectedModel?.endpoint !== undefined && selectedModel.endpoint) endpoint = selectedModel.endpoint;
-        
-        let requestConfig = this.app.configuration.axiosRequestConfigTools;
-        if (selectedModel?.isKeyRequired !== undefined && selectedModel.isKeyRequired){
-            const apiKey = this.app.persistence.getApiKey(selectedModel.endpoint??"");
-            if (apiKey){
-                requestConfig = {
-                    headers: {
-                        Authorization: `Bearer ${apiKey}`,
-                        "Content-Type": "application/json",
-                    },
-                }
-            }
-        }
-        
+        const { endpoint, model, requestConfig } = this.getToolsRequestDetails();
+        const trace: RequestTraceContext = this.createRequestTrace(isSummarization ? 'agent-summary' : 'agent')
         let uri = `${Utils.trimTrailingSlash(endpoint)}/${this.app.configuration.ai_api_version}/chat/completions`;
         let request: any;
-        
+
         if (isSummarization) {
             request = this.createGetSummaryRequestPayload(messages, model);
-            const response = await axios.post<LlamaToolsResponse>(
-                uri,
-                request,
-                { ...requestConfig, signal: abortSignal }
-            );
-            return response.status === STATUS_OK ? response.data : undefined;
+            try {
+                this.logApiRequest('TOOLS_SUMMARY', 'POST', uri, `model=${model || 'none'} | ${this.summarizeTemplateMessages(request.messages as unknown[])}`, trace);
+                const response = await axios.post<LlamaToolsResponse>(
+                    uri,
+                    request,
+                    { ...requestConfig, signal: abortSignal }
+                );
+                this.logApiResponse('TOOLS_SUMMARY', 'POST', uri, `finish_reason=${response.data?.choices?.[0]?.finish_reason ?? 'unknown'}`, trace);
+                return response.status === STATUS_OK ? response.data : undefined;
+            } catch (error) {
+                this.logApiError('TOOLS_SUMMARY', 'POST', uri, error, `model=${model || 'none'}`, trace);
+                return this.createErrorResponse(this.extractApiError(error));
+            }
         }
 
         // Streaming branch for tools/agent calls
-        request = this.createToolsRequestPayload(messages, model, true, imagePath);
-
+        request = this.createToolsRequestPayload(messages, model, true, imagePath, iterationsCount, endpoint);
         try {
             const streamResponse = await axios.post<any>(
                 uri,
                 request,
                 { ...requestConfig, responseType: 'stream' as const, signal: abortSignal }
             );
+
+            // The search_tools result (if any) is already used in the request and is not needed anymore
+            this.app.tools.clearToolSearch();
 
             return await new Promise<LlamaToolsResponse | undefined>((resolve) => {
                 const readable = streamResponse.data as NodeJS.ReadableStream;
@@ -433,15 +948,49 @@ export class LlamaServer {
                 let finishReason: string | undefined = undefined;
                 const toolCalls: any[] = [];
                 const message: any = { role: 'assistant', content: null as string | null };
+                let responseData: Partial<LlamaToolsResponse> = {};
 
                 const finalize = () => {
                     message.content = fullContent || null;
                     if (toolCalls.length > 0) message.tool_calls = toolCalls;
+
+                    // Extract total_tokens from usage and set in llamaAgent
+                    let requestTokens = responseData.usage?.total_tokens;
+                    if (typeof requestTokens === 'number') {
+                        this.app.llamaAgent.setLastReqTokens(requestTokens);
+                        this.app.chatService.updateChatTokens(
+                            this.app.getChat(), 
+                            requestTokens, 
+                            responseData.usage?.prompt_tokens,
+                            responseData.usage?.completion_tokens,
+                            responseData.usage?.prompt_tokens_details?.cached_tokens, 
+                            responseData.usage?.cost??responseData.usage?.cost_usd
+                        );
+                        this.app.llamaWebviewProvider.updateRequestsInfoInView()
+                    } else if (responseData.timings 
+                        && typeof responseData.timings.predicted_n === 'number'
+                        && typeof responseData.timings.prompt_n === 'number'
+                        && typeof responseData.timings.cache_n === 'number'
+                    ) {
+                        requestTokens = responseData.timings.predicted_n + responseData.timings.prompt_n + responseData.timings.cache_n;
+                        this.app.llamaAgent.setLastReqTokens(requestTokens);
+                        this.app.chatService.updateChatTokens(
+                            this.app.getChat(), 
+                            requestTokens,
+                            responseData.timings.prompt_n + responseData.timings.cache_n,
+                            responseData.timings.predicted_n,
+                            responseData.timings.cache_n,
+                            0
+                        );
+                        this.app.llamaWebviewProvider.updateRequestsInfoInView()
+                    }
+
                     resolve({
                         choices: [{
                             message,
                             finish_reason: finishReason,
-                        }]
+                        }],
+                        ...responseData,
                     });
                 };
 
@@ -469,8 +1018,18 @@ export class LlamaServer {
                         }
                         try {
                             const json = JSON.parse(payload);
+                            if (json.usage) responseData.usage = json.usage;
+                            if (json.timings) responseData.timings = json.timings;
                             const choice = json.choices && json.choices[0] ? json.choices[0] : undefined;
                             if (!choice) continue;
+
+                            if (typeof json.truncated === 'boolean') responseData.truncated = json.truncated;
+                            if (typeof json.tokens_cached === 'number') responseData.tokens_cached = json.tokens_cached;
+                            if (json.timings) responseData.timings = json.timings;
+                            if (json.generation_settings) responseData.generation_settings = json.generation_settings;
+                            if (json.usage) {
+                                responseData.usage = json.usage;
+                            }
 
                             // Finish reason may appear on a later chunk
                             if (choice.finish_reason) finishReason = choice.finish_reason;
@@ -509,15 +1068,17 @@ export class LlamaServer {
                 });
 
                 readable.on('error', () => {
-                    resolve(undefined);
+                    this.logApiError('TOOLS_STREAM', 'POST', uri, { message: 'Stream error during generation' }, `model=${model || 'none'}`, trace);
+                    resolve(this.createErrorResponse({ message: 'Stream error during generation' }));
                 });
             });
         } catch (err) {
-            return undefined;
+            this.logApiError('TOOLS_STREAM', 'POST', uri, err, `model=${model || 'none'}`, trace);
+            return this.createErrorResponse(this.extractApiError(err));
         }
     };
 
-    
+
 
     updateExtraContext = (chunks: any[]): void => {
         // If the server is OpenAI compatible, use the OpenAI API to prepare for the next FIM
@@ -527,22 +1088,28 @@ export class LlamaServer {
 
         // else, make a request to the API to prepare for the next FIM
         let { endpoint, model, requestConfig } = this.getComplModelProperties();
+        const infillUrl = `${Utils.trimTrailingSlash(endpoint)}/infill`;
+        this.logApiRequest('FIM_PREP', 'POST', infillUrl, `model=${model || 'none'} | chunks=${chunks.length ?? 0}`);
         axios.post<LlamaResponse>(
-            `${Utils.trimTrailingSlash(endpoint)}/infill`,
+            infillUrl,
             this.createRequestPayload(true, "", "", chunks, "", model, undefined),
             requestConfig
-        );
+        ).then(() => {
+            this.logApiResponse('FIM_PREP', 'POST', infillUrl, 'ok');
+        }).catch((error) => {
+            this.logApiError('FIM_PREP', 'POST', infillUrl, error, `model=${model || 'none'}`);
+        });
     };
 
     getEmbeddings = async (text: string): Promise<LlamaEmbeddingsResponse | undefined> => {
+        let endpoint = this.app.configuration.endpoint_embeddings;
+        let model = this.app.configuration.ai_model;
         try {
             let selectedModel: LlmModel = this.app.getEmbeddingsModel();
-            let model = this.app.configuration.ai_model;
             if (selectedModel.aiModel) model = selectedModel.aiModel;
 
-            let endpoint = this.app.configuration.endpoint_embeddings;
             if (selectedModel.endpoint) endpoint = selectedModel.endpoint;
-            
+
             let requestConfig = this.app.configuration.axiosRequestConfigEmbeddings;
             if (selectedModel.isKeyRequired){
                 const apiKey = this.app.persistence.getApiKey(selectedModel.endpoint??"");
@@ -555,9 +1122,11 @@ export class LlamaServer {
                     }
                 }
             }
-            
+
+            const embeddingsUrl = `${Utils.trimTrailingSlash(endpoint)}/v1/embeddings`;
+            this.logApiRequest('EMBEDDINGS', 'POST', embeddingsUrl, `model=${model || 'none'} | input_length=${text.length}`);
             const response = await axios.post<LlamaEmbeddingsResponse>(
-                `${Utils.trimTrailingSlash(endpoint)}/v1/embeddings`,
+                embeddingsUrl,
                 {
                     "input": text,
                     // "model": "GPT-4",
@@ -566,8 +1135,10 @@ export class LlamaServer {
                 },
                 requestConfig
             );
+            this.logApiResponse('EMBEDDINGS', 'POST', embeddingsUrl, `tokens=${response.data.usage?.total_tokens ?? 'unknown'}`);
             return response.data;
         } catch (error: any) {
+            this.logApiError('EMBEDDINGS', 'POST', `${Utils.trimTrailingSlash(endpoint)}/v1/embeddings`, error, `model=${model || 'none'}`);
             console.error('Failed to get embeddings:', error);
             vscode.window.showInformationMessage(this.app.configuration.getUiText("Error getting embeddings") + " " + error.message);
             return undefined;
@@ -582,6 +1153,7 @@ export class LlamaServer {
             return;
         }
         try {
+            launchCmd = this.useNewLaunchCommand(launchCmd);
             this.vsCodeFimTerminal = vscode.window.createTerminal({
                 name: 'llama.cpp Completion Terminal'
             });
@@ -600,6 +1172,7 @@ export class LlamaServer {
             return;
         }
         try {
+            launchCmd = this.useNewLaunchCommand(launchCmd);
             this.vsCodeChatTerminal = vscode.window.createTerminal({
                 name: 'llama.cpp Chat Terminal'
             });
@@ -618,6 +1191,7 @@ export class LlamaServer {
             return;
         }
         try {
+            launchCmd = this.useNewLaunchCommand(launchCmd);
             this.vsCodeEmbeddingsTerminal = vscode.window.createTerminal({
                 name: 'llama.cpp Embeddings Terminal'
             });
@@ -636,6 +1210,7 @@ export class LlamaServer {
             return;
         }
         try {
+            launchCmd = this.useNewLaunchCommand(launchCmd);
             this.vsCodeToolsTerminal = vscode.window.createTerminal({
                 name: 'llama.cpp Tools Terminal'
             });
@@ -696,20 +1271,56 @@ export class LlamaServer {
                 name: 'llama-vscode Command Terminal'
             });
         // }
-        
+
         this.vsCodeCommandTerminal.show(true);
         this.vsCodeCommandTerminal.sendText(`echo "Executing: ${command}"`);
         try {
             // Execute command programmatically for reliable output
-            const { stdout, stderr } = await exec(command);
-            // Show output in   terminal
+            // Use the user's login shell so PATH and shell startup files are sourced.
+            const platform = os.platform();
+            let execCommand = command;
+            if (platform === 'linux' || platform === 'darwin') {
+                const userShell = process.env.SHELL || '/bin/bash';
+                const shellName = path.basename(userShell);
+                const escapedCommand = command.replace(/'/g, "'\\''");
+                if (shellName === 'bash' || shellName === 'zsh' || shellName === 'ksh' || shellName === 'sh') {
+                    execCommand = `${userShell} -ilc '${escapedCommand}'`;
+                } else if (shellName === 'fish') {
+                    execCommand = `${userShell} -l -c '${escapedCommand}'`;
+                } else {
+                    execCommand = `${userShell} -c '${escapedCommand}'`;
+                }
+            }
+            const { stdout, stderr } = await exec(execCommand);
+            // Show output in terminal
             this.vsCodeCommandTerminal.sendText(`echo "Command completed successfully"`);
-            this.vsCodeCommandTerminal.sendText(`echo "Output: ${stdout.trim()}"`);
-            
-            return { stdout, stderr };
+            // this.vsCodeCommandTerminal.sendText(`echo "Output: ${stdout.trim()}"`);
+
+            // Filter out harmless TTY warnings that occur because cp.exec doesn't allocate a real TTY.
+            const harmlessTtyWarnings = [
+                'cannot set terminal process group',
+                'no job control in this shell',
+            ];
+            const cleanedStderr = stderr
+                .split('\n')
+                .filter((line: string) => !harmlessTtyWarnings.some(warning => line.includes(warning)))
+                .join('\n');
+            if (cleanedStderr) {
+                this.vsCodeCommandTerminal.sendText(`echo "${cleanedStderr.trim()}"`);
+            }
+            return { stdout, stderr: cleanedStderr };
         } catch (error: any) {
             this.vsCodeCommandTerminal.sendText(`echo "Command failed: ${error.message}"`);
-            return { stdout: "", stderr: error.message };
+            // In catch block, error.stderr may also contain these warnings
+            const harmlessTtyWarnings = [
+                'cannot set terminal process group',
+                'no job control in this shell',
+            ];
+            const cleanedStderr = (error.stderr ?? error.message ?? '')
+                .split('\n')
+                .filter((line: string) => !harmlessTtyWarnings.some(warning => line.includes(warning)))
+                .join('\n');
+            return { stdout: error.stdout ?? "", stderr: cleanedStderr };
         } finally {
             // Keep terminal open for a bit, then dispose
             // setTimeout(() => terminal.dispose(), 5000);
@@ -770,7 +1381,7 @@ export class LlamaServer {
             this.vsCodeCommandTerminal = undefined;
         }
     }
-    
+
     killToolsCmd = (): void => {
         if (this.vsCodeToolsTerminal) {
             this.vsCodeToolsTerminal.dispose();
@@ -778,6 +1389,15 @@ export class LlamaServer {
         }
     }
 
+    private useNewLaunchCommand(launchCmd: string) {
+        const oldCommand = "llama-server ";
+        const newCommand = "llama serve ";
+        if (launchCmd.startsWith("llama-server ")) {
+            launchCmd = launchCmd;
+            launchCmd = newCommand + launchCmd.substring(newCommand.length);
+        }
+        return launchCmd;
+    }
 
     private getChatModelProperties() {
         let selectedModel: LlmModel = this.app.getChatModel();
@@ -786,7 +1406,7 @@ export class LlamaServer {
         let endpoint = this.app.configuration.endpoint_chat;
         let model = this.app.configuration.ai_model;
         let requestConfig = this.app.configuration.axiosRequestConfigChat;
-        if (!endpoint) { 
+        if (!endpoint) {
             endpoint = this.app.configuration.endpoint_tools;
             requestConfig = this.app.configuration.axiosRequestConfigTools;
         }
@@ -830,5 +1450,41 @@ export class LlamaServer {
             }
         }
         return { endpoint, model, requestConfig };
+    }
+
+    checkHealth = async (modelType: ModelType, model: LlmModel) => {
+        let requestConfig: AxiosRequestConfig = this.app.configuration.axiosRequestConfigCompl;
+        switch (modelType) {
+            case ModelType.Chat:
+                requestConfig = this.app.configuration.axiosRequestConfigChat;
+                break;
+            case ModelType.Completion:
+                requestConfig = this.app.configuration.axiosRequestConfigCompl;
+                break;
+            case ModelType.Tools:
+                requestConfig = this.app.configuration.axiosRequestConfigTools;
+                break;
+            case ModelType.Embeddings:
+                requestConfig = this.app.configuration.axiosRequestConfigEmbeddings;
+                break;
+        }
+        try {
+            // TODO:Make sure to work with OpenRouter too
+            const healthUrl = model.endpoint + "/health";
+            this.logApiRequest('HEALTH', 'GET', healthUrl, `modelType=${modelType}`);
+            let response = await axios.get(healthUrl, requestConfig);
+            this.logApiResponse('HEALTH', 'GET', healthUrl, `status=${response.data?.status ?? 'missing'}`);
+            if (!response.data.hasOwnProperty("status")) return "Error: No health status field found";
+            return response.data.status
+        } catch (error) {
+            this.logApiError('HEALTH', 'GET', model.endpoint + "/health", error, `modelType=${modelType}`);
+            if (error instanceof TypeError) {
+                return "TypeError occurred: " + error.message;
+            } else if (error instanceof ReferenceError) {
+                return "ReferenceError occurred:" + error.message;
+            } else {
+                return "An unexpected Error occurred:" + (error as Error).message;
+            }
+        }
     }
 }

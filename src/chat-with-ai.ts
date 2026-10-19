@@ -1,6 +1,7 @@
 import {Application} from "./application";
 import * as vscode from 'vscode';
 import { Utils } from "./utils";
+import { ModelType, PERSISTENCE_KEYS } from "./constants";
 
 
 export class ChatWithAi {
@@ -15,18 +16,58 @@ export class ChatWithAi {
         
     }
 
-    showChatWithTools = async (context: vscode.ExtensionContext) => {
-        let query: string|undefined = undefined
-        query = await vscode.window.showInputBox({
-            placeHolder: this.app.configuration.getUiText('Enter your question...'),
-            prompt: this.app.configuration.getUiText('What would you like to ask an Agent (AI with tools)?'),
-            ignoreFocusOut: true
-        });
+    getSelectedPrompt = (editor: vscode.TextEditor): string | undefined => {
+        const selection = editor.selection
+        if (!selection.isEmpty) return editor.document.getText(selection)
+        const firstNonWhitespaceCharIndex = editor.document.lineAt(0).firstNonWhitespaceCharacterIndex
+        const firstLine = editor.document.lineAt(0)
+        const lastLine = editor.document.lineAt(editor.document.lineCount - 1)
+        const query = editor.document.getText(new vscode.Range(
+            new vscode.Position(0, firstNonWhitespaceCharIndex),
+            lastLine.range.end
+        ))
+        return query || undefined
+    }
 
-        if (!query) {
-            return
-        } else {        
-            this.app.llamaAgent.run(query)
+    sendPromptToAgent = async (editor: vscode.TextEditor) => {
+        if (!this.app.configuration.send_prompt_from_editor_enabled){
+            const enableSendPrompt = await this.app.dialogs.showYesNoDialog(this.app.configuration.getUiText("Send prompt from editor is disabled. Do you want to enable it?")??"")
+            if (enableSendPrompt) {
+                await this.app.configuration.updateConfigValue("send_prompt_from_editor_enabled", true)
+                vscode.window.showInformationMessage(this.app.configuration.getUiText("Sending prompt from editor is enabled. Use Ctrl+Alt+Enter or context menu to send the selected text (or all text if no selection) to the agent. Use setting send_prompt_from_editor_enabled to disable it.")??"")
+                const enableRemoveSentPrompt = await this.app.dialogs.showYesNoDialog(this.app.configuration.getUiText("Do you want the sent prompt to be removed from the editor?")??"")
+                if (enableRemoveSentPrompt) {
+                    await this.app.configuration.updateConfigValue("remove_sent_prompt_from_editor", true)
+                    vscode.window.showInformationMessage(this.app.configuration.getUiText("Removing sent prompt from editor is enabled. Use setting remove_sent_prompt_from_editor to disable it.")??"")
+                }
+            }
+            return;
+        }
+
+        const query = this.getSelectedPrompt(editor)
+        if (query) {   
+            const promptLimit = 3000
+            if (query.length > promptLimit){
+                const answer = await this.app.dialogs.showYesNoDialog(`The prompt looks too big - ${query.length} chars. Are you sure you want to send it directly to the agent? `)
+                if (!answer) return;
+            }
+            // await this.app.llamaWebviewProvider.showAgentViewInUi(query);
+            this.app.llamaAgent.run(query);
+            if (!this.app.configuration.remove_sent_prompt_from_editor) return
+            if (editor.selection.isEmpty) {
+                const firstLine = editor.document.lineAt(0);
+                const lastLine = editor.document.lineAt(editor.document.lineCount - 1);
+                const range = new vscode.Range(
+                    firstLine.range.start,
+                    lastLine.range.end
+                );
+                await editor.edit(editBuilder => editBuilder.delete(range));
+                editor.selection = new vscode.Selection(new vscode.Position(0, 0), new vscode.Position(0, 0));
+            } else {
+                const selection = editor.selection
+                await editor.edit(editBuilder => editBuilder.delete(selection));
+                editor.selection = new vscode.Selection(selection.active, selection.active);
+            }            
         }
     }
 
@@ -57,15 +98,20 @@ export class ChatWithAi {
 
         let chatModel = this.app.getChatModel();
         if (!this.app.isChatModelSelected() && !this.app.configuration.endpoint_chat) chatModel = this.app.getToolsModel();    
+        if (!chatModel.endpoint) {
+            await this.app.modelService.selectDefaultModel(ModelType.Chat, PERSISTENCE_KEYS.DEFAULT_CHAT_MODEL);
+            chatModel = this.app.getChatModel();
+        }
         if (chatModel.endpoint) {
             const chatEndpoint = Utils.trimTrailingSlash(chatModel.endpoint)
             targetUrl = chatEndpoint ? chatEndpoint + "/" : "";
         }
+        
         if (!targetUrl) {
-            await Utils.suggestModelSelection(
-                "Select a chat or tools model run by llama-server or an env with chat or tools model run on llama-server to chat with AI.",
+            await this.app.dialogs.suggestModelSelection(
+                "Select a chat or tools model run by llama serve or an env with chat or tools model run on llama serve to chat with AI.",
                 "After the chat/tools model is loaded, try again opening Chat with AI.",
-                "No endpoint for the chat or tools model. Select a chat or tools model run on llama-server or an env with chat or tools model or enter the endpoint of a running llama.cpp server with chat model in setting endpoint_chat. ",
+                "No endpoint for the chat or tools model. Select a chat or tools model run on llama serve or an env with chat or tools model or enter the endpoint of a running llama.cpp server with chat model in setting endpoint_chat. ",
                 this.app
             );
             return
@@ -124,23 +170,15 @@ export class ChatWithAi {
             aiPanel.webview.onDidReceiveMessage((message) => {
                 if (message.command === 'escapePressed') {
                     this.focusEditor();
+                } else if (message.command === 'openInBrowser') {
+                    vscode.env.openExternal(vscode.Uri.parse(targetUrl));
                 } else if (message.command === 'jsAction') {
                     // console.log("onDidReceiveMessage: " + message.text);
                 }
             });
-            // Wait for the page to load before sending message
-            if (query) extraCont += await this.prepareRagContext(query);
-            setTimeout(async () => {
-                if (aiPanel) aiPanel.webview.postMessage({ command: 'setText', text: queryToSend, context: extraCont });
-            }, Math.max(0, 3000 - (Date.now() - createWebviewTimeInMs)));
         } else {
             aiPanel.reveal();
             this.lastActiveEditor = editor;
-            if (query) extraCont += await this.prepareRagContext(query);
-            // Wait for the page to load before sending message
-            setTimeout(async () => {
-                if (aiPanel) aiPanel.webview.postMessage({ command: 'setText', text: queryToSend, context: extraCont });
-            }, 500);
         }
     }
 
@@ -157,46 +195,12 @@ export class ChatWithAi {
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <meta 
+                http-equiv="Content-Security-Policy" 
+                content="default-src 'self' https: http: data: blob: 'unsafe-inline' 'unsafe-eval';
+                        connect-src 'self' https: http: ws: wss:;
+                        frame-src 'self' https: http:;">
             <title>llama.cpp server UI</title>
-            <script>
-                // Initialize the VS Code API
-                const vscode = acquireVsCodeApi();
-                vscode.postMessage({ command: 'jsAction', text: 'vscode javascript object created' });
-
-                // Listen for messages from the extension
-                window.addEventListener('message', (event) => {
-                    vscode.postMessage({ command: 'jsAction', text: 'message received' });
-
-                    const { command, text, context } = event.data; // Extract the command and text from the event
-                    if (command === 'setText') {
-                        vscode.postMessage({ command: 'jsAction', text: 'command setText received' });
-
-                        const iframe = document.getElementById('askAiIframe');
-                        if (iframe) {
-                            vscode.postMessage({ command: 'jsAction', text: 'askAiIframe obtained' });
-                            iframe.contentWindow.postMessage({ command: 'setText', text: text, context: context }, '*');
-                            vscode.postMessage({ command: 'jsAction', text: text });
-                        }
-                    }
-                    if (command === 'escapePressed') {
-                        vscode.postMessage({ command: 'jsAction', text: 'command escape pressed' });
-                        vscode.postMessage({ command: 'escapePressed' });
-                    }
-                    if (command === 'jsAction') {
-                        vscode.postMessage({ command: 'jsAction', text: text });
-                    }
-                });
-
-                // Listen for key events in the iframe
-                window.addEventListener('keydown', (event) => {
-                    vscode.postMessage({ command: 'jsAction', text: 'keydown event received' });
-                    if (event.key === 'Escape') {
-                        // Send a message to the extension when Escape is pressed
-                        vscode.postMessage({ command: 'escapePressed', text: "" });
-                        vscode.postMessage({ command: 'jsAction', text: "Escabe key pressed..." });
-                    }
-                });
-            </script>
             <style>
                 body, html {
                     margin: 0;
@@ -205,16 +209,58 @@ export class ChatWithAi {
                     height: 100%;
                     overflow: hidden;
                 }
+                #openInBrowserLink {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    padding: 8px 16px;
+                    background-color: var(--vscode-input-background);
+                    color: var(--vscode-editor-foreground);
+                    border: 1px solid var(--vscode-input-border);
+                    border-radius: 6px;
+                    font-size: 14px;
+                    font-weight: 500;
+                    cursor: pointer;
+                    transition: all 0.2s ease;
+                }
+                #openInBrowserLink:hover {
+                    background-color: var(--vscode-panel-border);
+                    transform: translateY(-1px);
+                }
                 iframe {
                     width: 100%;
-                    height: 100%;
+                    height: calc(100% - 40px);
                     border: none;
                 }
             </style>
         </head>
         <body>
-            <iframe src="${url}" id="askAiIframe"></iframe>
-        </body>
+            <button id="openInBrowserLink" title="Shows the AI chat in browser (where the copy buttons work)">Show in Browser</button>
+            
+            <iframe src="${url}" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals" id="askAiIframe"></iframe>
+            <script>
+                (function() {
+                    const vscode = acquireVsCodeApi();
+                    console.log('[chat-with-ai] Script loaded, vscode acquired:', typeof vscode);
+                    
+                    window.addEventListener('DOMContentLoaded', function() {
+                        var button = document.getElementById('openInBrowserLink');
+                        
+                        if (button) {
+                            button.addEventListener('click', function(e) {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                try {
+                                    vscode.postMessage({command: 'openInBrowser'});
+                                } catch (err) {
+                                    console.error('[chat-with-ai] Exception sending message:', err);
+                                }
+                            });
+                        }
+                    });
+                })();
+            </script>
+            </body>
         </html>
         `;
     }
@@ -232,4 +278,6 @@ export class ChatWithAi {
 
         return extraCont
     }
+
+    
 }

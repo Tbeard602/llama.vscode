@@ -2,20 +2,22 @@ import {Application} from "./application";
 import { LlamaResponse } from "./types";
 import vscode from "vscode";
 import {Utils} from "./utils";
+import { isAxiosError } from "axios";
 
 interface CompletionDetails {
-    completion: string;
+    completions: string[];
     position: vscode.Position;
     inputPrefix: string;
     inputSuffix: string;
     prompt: string;
+    complIndex: number;
 }
 
 export class Completion {
     private app: Application
     private isRequestInProgress = false
     isForcedNewRequest = false
-    lastCompletion: CompletionDetails = {completion: "", position: new vscode.Position(0, 0), inputPrefix: "", inputSuffix: "", prompt: ""};
+    lastCompletion: CompletionDetails = {completions: [], complIndex: 0, position: new vscode.Position(0, 0), inputPrefix: "", inputSuffix: "", prompt: ""};
 
     constructor(application: Application) {
         this.app = application;
@@ -27,6 +29,15 @@ export class Completion {
         if (!this.app.configuration.auto && context.triggerKind == vscode.InlineCompletionTriggerKind.Automatic) {
             this.app.logger.addEventLog(group, "MANUAL_MODE_AUTOMATIC_TRIGGERING_RETURN", "")
             return null;
+        }
+
+        // Debounce: wait for the user to pause typing before hitting the backend
+        if (context.triggerKind == vscode.InlineCompletionTriggerKind.Automatic && this.app.configuration.debounce_ms > 0) {
+            await Utils.delay(this.app.configuration.debounce_ms);
+            if (token.isCancellationRequested) {
+                this.app.logger.addEventLog(group, "DEBOUNCE_CANCELLATION_RETURN", "")
+                return null;
+            }
         }
 
         // Start only if the previous request is finiched
@@ -66,8 +77,8 @@ export class Completion {
         try {
             let data: LlamaResponse | undefined
             let hashKey = this.app.lruResultCache.getHash(inputPrefix + "|" + inputSuffix + "|" + prompt)
-            let completion = this.getCachedCompletion(hashKey, inputPrefix, inputSuffix, prompt)
-            let isCachedResponse = !this.isForcedNewRequest && completion != undefined
+            let completions = this.getCachedCompletion(hashKey, inputPrefix, inputSuffix, prompt)
+            let isCachedResponse = !this.isForcedNewRequest && completions != undefined
             if (!isCachedResponse) {
                 this.isForcedNewRequest = false
                 if (token.isCancellationRequested){
@@ -78,46 +89,56 @@ export class Completion {
                 this.app.statusbar.showThinkingInfo();
 
                 data = await this.app.llamaServer.getFIMCompletion(inputPrefix, inputSuffix, prompt, this.app.extraContext.chunks, nindent)
-                if (data != undefined) completion = data.content;
-                else completion = undefined
+                if (data != undefined) completions = this.getComplFromContent(data);
+                else completions = undefined
             }
-            if (completion == undefined || completion.trim() == ""){
+            if (completions == undefined || completions.length == 0){
                 this.app.statusbar.showInfo(undefined);
                 this.isRequestInProgress = false
                 this.app.logger.addEventLog(group, "NO_SUGGESTION_RETURN", "")
                 return [];
             }
 
-            let suggestionLines = completion.split(/\r?\n/)
-            Utils.removeTrailingNewLines(suggestionLines);
+            let newCompletions: string[] = []
+            let firstComplLines: string[] = []
 
-            if (this.shouldDiscardSuggestion(suggestionLines, document, position, linePrefix, lineSuffix)) {
+            for (let compl of completions){
+                let suggestionLines = compl.split(/\r?\n/)
+                Utils.removeTrailingNewLines(suggestionLines);
+
+                if (this.shouldDiscardSuggestion(suggestionLines, document, position, linePrefix, lineSuffix)) {
+                    continue
+                } else {
+                    compl = this.updateSuggestion(suggestionLines, lineSuffix);
+                    newCompletions.push(compl);
+                    if (firstComplLines.length == 0) firstComplLines = suggestionLines;
+                }     
+            }
+            if (newCompletions.length == 0){
                 this.app.statusbar.showInfo(undefined);
-                this.isRequestInProgress = false
-                this.app.logger.addEventLog(group, "DISCARD_SUGGESTION_RETURN", "")
-                return [];
+                    this.isRequestInProgress = false
+                    this.app.logger.addEventLog(group, "DISCARD_SUGGESTION_RETURN", "")
+                    return [];
             }
 
-            completion = this.updateSuggestion(suggestionLines, lineSuffix);
-
-            if (!isCachedResponse) this.app.lruResultCache.put(hashKey, completion)
-            this.lastCompletion = this.getCompletionDetails(completion, position, inputPrefix, inputSuffix, prompt);
+            if (!isCachedResponse && newCompletions) this.app.lruResultCache.put(hashKey, newCompletions)
+            this.lastCompletion = this.getCompletionDetails(newCompletions, position, inputPrefix, inputSuffix, prompt);
 
             // Run async as not needed for the suggestion
             setTimeout(async () => {
                 if (isCachedResponse) this.app.statusbar.showCachedInfo()
                 else this.app.statusbar.showInfo(data);
                 if (!token.isCancellationRequested && lineSuffix.trim() === ""){
-                    await this.cacheFutureSuggestion(inputPrefix, inputSuffix, prompt, suggestionLines);
-                    await this.cacheFutureAcceptLineSuggestion(inputPrefix, inputSuffix, prompt, suggestionLines);
+                    await this.cacheFutureSuggestion(inputPrefix, inputSuffix, prompt, firstComplLines);
+                    await this.cacheFutureAcceptLineSuggestion(inputPrefix, inputSuffix, prompt, firstComplLines);
                 }
                 if (!token.isCancellationRequested){
                     this.app.extraContext.addFimContextChunks(position, context, document);
                 }
             }, 0);
             this.isRequestInProgress = false
-            this.app.logger.addEventLog(group, "NORMAL_RETURN", suggestionLines[0])
-            return [this.getCompletion(this.removeLeadingSpaces(completion, spacesToRemove), position)];
+            this.app.logger.addEventLog(group, "NORMAL_RETURN", firstComplLines[0])
+            return this.getCompletion(newCompletions||[], position, spacesToRemove);
         } catch (err) {
             console.error("Error fetching llama completion:", err);
             vscode.window.showInformationMessage(this.app.configuration.getUiText(`Error getting response. Please check if llama.cpp server is running.`)??"");
@@ -125,7 +146,16 @@ export class Completion {
             if (err instanceof Error) {
                 vscode.window.showInformationMessage(err.message);
                 errorMessage = err.message
+                if (isAxiosError(err) && err.response?.data?.error?.message) {
+                    // Field 'n_cmpl': Value must be between 1 <= value <= 4, but got 7
+                    let dataErrMsg = err.response?.data?.error?.message
+                    if (dataErrMsg.startsWith("Field 'n_cmpl': Value must be between")) dataErrMsg +='; Set setting Max_parallel_completions within the range for n_cmpl.'
+                    vscode.window.showInformationMessage(dataErrMsg);
+                    errorMessage += " " + dataErrMsg;
+                }
+                
             }
+             
             this.isRequestInProgress = false
             this.app.logger.addEventLog(group, "ERROR_RETURN", errorMessage)
             return [];
@@ -155,21 +185,36 @@ export class Completion {
             let promptCut = prompt.slice(i)
             let hash = this.app.lruResultCache.getHash(inputPrefix + "|" + inputSuffix + "|" + newPrompt)
             let result = this.app.lruResultCache.get(hash)
-            if (result != undefined && promptCut == result.slice(0,promptCut.length)) return result.slice(prompt.length - newPrompt.length)
+            if (result == undefined) continue
+            let completions: string[] = []
+            for (const compl of result){
+                if (compl && promptCut == compl.slice(0,promptCut.length)) {
+                    completions.push(compl.slice(prompt.length - newPrompt.length))
+                }
+            }
+            if (completions.length > 0) return completions;
         }
 
         return undefined
     }
 
-    getCompletion = (completion: string, position: vscode.Position) => {
-        return new vscode.InlineCompletionItem(
-            completion,
-            new vscode.Range(position, position)
-        );
+    getCompletion = (completions: string[], 
+        position: vscode.Position,
+        spacesToRemove: number): vscode.InlineCompletionItem[] => {
+        let completionItems: vscode.InlineCompletionItem[] = []
+        for (const completion of completions){
+            const compl: vscode.InlineCompletionItem = new vscode.InlineCompletionItem(
+                this.removeLeadingSpaces(completion, spacesToRemove),
+                new vscode.Range(position, position)
+            )
+            completionItems.push(compl);
+        }
+    
+        return completionItems;
     }
 
-    private getCompletionDetails = (completion: string, position: vscode.Position, inputPrefix: string, inputSuffix: string, prompt: string) => {
-        return { completion: completion, position: position, inputPrefix: inputPrefix, inputSuffix: inputSuffix, prompt: prompt };
+    private getCompletionDetails = (completions: string[], position: vscode.Position, inputPrefix: string, inputSuffix: string, prompt: string) => {
+        return { completions: completions,complIndex: 0, position: position, inputPrefix: inputPrefix, inputSuffix: inputSuffix, prompt: prompt };
     }
 
     // logic for discarding predictions that repeat existing text
@@ -241,14 +286,17 @@ export class Completion {
         let cached_completion = this.app.lruResultCache.get(futureHashKey)
         if (cached_completion != undefined) return;
         let futureData = await this.app.llamaServer.getFIMCompletion(futureInputPrefix, futureInputSuffix, futurePrompt, this.app.extraContext.chunks, prompt.length - prompt.trimStart().length);
-        let futureSuggestion = "";
+        let futureSuggestions = [];
         if (futureData != undefined && futureData.content != undefined && futureData.content.trim() != "") {
-            futureSuggestion = futureData.content;
-            let suggestionLines = futureSuggestion.split(/\r?\n/)
-            Utils.removeTrailingNewLines(suggestionLines);
-            futureSuggestion = suggestionLines.join('\n')
+            let suggestions = this.getComplFromContent(futureData);
+            for (let futureSuggestion of suggestions||[]){
+                let suggestionLines = futureSuggestion.split(/\r?\n/)
+                Utils.removeTrailingNewLines(suggestionLines);
+                futureSuggestion = suggestionLines.join('\n')
+                futureSuggestions.push(futureSuggestion)
+            }
             let futureHashKey = this.app.lruResultCache.getHash(futureInputPrefix + "|" + futureInputSuffix + "|" + futurePrompt);
-            this.app.lruResultCache.put(futureHashKey, futureSuggestion);
+            this.app.lruResultCache.put(futureHashKey, futureSuggestions);
         }
     }
 
@@ -262,13 +310,13 @@ export class Completion {
             let futureSuggestion = suggestionLines.slice(1).join('\n')
             let cached_completion = this.app.lruResultCache.get(futureHashKey)
             if (cached_completion != undefined) return;
-            else this.app.lruResultCache.put(futureHashKey, futureSuggestion)
+            else this.app.lruResultCache.put(futureHashKey, [futureSuggestion])
         }
     }
 
     insertNextWord = async (editor: vscode.TextEditor) => {
         // Retrieve the last inline completion item
-        const lastSuggestion = this.lastCompletion.completion;
+        const lastSuggestion = this.lastCompletion.completions[this.lastCompletion.complIndex];
         if (!lastSuggestion) {
             return;
         }
@@ -294,7 +342,7 @@ export class Completion {
 
     insertFirstLine = async (editor: vscode.TextEditor) => {
         // Retrieve the last inline completion item
-        const lastItem = this.lastCompletion.completion;
+        const lastItem = this.lastCompletion.completions[this.lastCompletion.complIndex];
         if (!lastItem) {
             return;
         }
@@ -310,5 +358,34 @@ export class Completion {
         await editor.edit(editBuilder => {
             editBuilder.insert(position, insertLine);
         });
+    }
+
+    increaseSuggestionIndex = async () => {
+        const totalCompletions = this.lastCompletion.completions.length
+        if (totalCompletions > 0){
+            this.lastCompletion.complIndex = (this.lastCompletion.complIndex + 1) % totalCompletions
+        }
+    }
+
+    decreaseSuggestionIndex = async () => {
+        const totalCompletions = this.lastCompletion.completions.length
+        if (totalCompletions > 0){
+            if (this.lastCompletion.complIndex > 0) this.lastCompletion.complIndex--
+            else this.lastCompletion.complIndex = totalCompletions - 1
+        }
+    }
+
+    private getComplFromContent(codeCompletions: any): string[] | undefined {
+        if ("content" in codeCompletions) 
+            return [codeCompletions.content??""]
+        
+        if (codeCompletions.length > 0){
+            let completions: Set<string> = new Set()
+            for (const compl of codeCompletions){
+                completions.add(compl.content??"")
+            }
+            return Array.from(completions);
+        } 
+        else return [];
     }
 }

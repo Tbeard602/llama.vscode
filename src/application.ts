@@ -25,11 +25,19 @@ import { ExternalModelStrategy } from "./services/external-model-strategy";
 import { EnvService } from "./services/env-service";
 import { AgentService } from "./services/agent-service";
 import { AgentCommandService } from "./services/agent-command-service";
+import { AgentCommandScheduler } from "./services/agent-command-scheduler";
 import { ChatService } from "./services/chat-service";
 import { Agent, Chat, Env, LlmModel } from "./types";
 import { ModelType, PERSISTENCE_KEYS } from "./constants";
 import { ApiKeyService } from "./services/api-key-service";
 import { OpenAiCompModelStrategy } from "./services/openai-comp-model-strategy";
+import { LlamaChatModelProvider } from "./llama-chat-model-provider";
+import { Dialogs } from "./dialogs";
+import { TelegramBot } from "./telegram-bot";
+import { DslInterpreter } from "./dsl-interpreter";
+import { DslCommands } from "./dsl-commands"
+import { AgentReminder } from "./agent-reminder";
+import { Hooks } from "./hooks";
 
 export class Application {
     public static readonly emptyModel = {name: ""};
@@ -61,19 +69,30 @@ export class Application {
     public envService: EnvService
     public agentService: AgentService
     public agentCommandService: AgentCommandService
+    public agentCommandScheduler: AgentCommandScheduler
     public chatService: ChatService
     public apiKeyService: ApiKeyService
+    public llamaChatModelProvider: LlamaChatModelProvider
+    public dialogs: Dialogs
+    public telegramBot: TelegramBot
+    public extensionContext: vscode.ExtensionContext
+    public dslInterpreter: DslInterpreter
+    public dslCommands: DslCommands
+    public agentReminder: AgentReminder
+    public hooks: Hooks
 
     private selectedComplModel: LlmModel = Application.emptyModel
-    private selectedModel: LlmModel = Application.emptyModel
+    private selectedChatModel: LlmModel = Application.emptyModel
     private selectedEmbeddingsModel: LlmModel = Application.emptyModel
     private selectedToolsModel: LlmModel = Application.emptyModel
     private selectedTmpAgentModel: LlmModel = Application.emptyModel
     private selectedEnv: Env = {name: ""}
     private selectedAgent: Agent = {name: "", systemInstruction: []}
     private selectedChat: Chat = {name: "", id: ""}
+    private modelState: Map<string, string> = new Map()
 
     private constructor(context: vscode.ExtensionContext) {
+        this.extensionContext = context
         this.configuration = new Configuration()
         this.llamaServer = new LlamaServer(this)
         this.extraContext = new ExtraContext(this)
@@ -102,8 +121,16 @@ export class Application {
         this.envService = new EnvService(this)
         this.agentService = new AgentService(this)
         this.agentCommandService = new AgentCommandService(this)
+        this.agentCommandScheduler = new AgentCommandScheduler(this)
         this.chatService = new ChatService(this) 
         this.apiKeyService = new ApiKeyService(this)
+        this.llamaChatModelProvider = new LlamaChatModelProvider(this);
+        this.dialogs = new Dialogs(this);
+        this.telegramBot = new TelegramBot(this);
+        this.dslInterpreter = new DslInterpreter(this);
+        this.dslCommands = new DslCommands(this);
+        this.agentReminder = new AgentReminder(this);
+        this.hooks = new Hooks(this);
     }
 
     public static getInstance(context: vscode.ExtensionContext): Application {
@@ -111,7 +138,26 @@ export class Application {
             Application.instance = new Application(context);
         }
         return Application.instance;
-    }   
+    }
+    
+    getModel = (modelType: ModelType): LlmModel => {
+        let model: LlmModel;
+        switch (modelType) {
+            case ModelType.Completion:
+                model = this.selectedComplModel;
+                break;
+            case ModelType.Chat:
+                model = this.selectedChatModel;
+                break;
+            case ModelType.Embeddings:
+                model = this.selectedEmbeddingsModel;
+                break;
+            case ModelType.Tools:
+                model = this.selectedToolsModel;
+                break;
+        }
+        return model;
+    }
 
     getComplModel = (): LlmModel => {
         return this.selectedComplModel;
@@ -122,7 +168,7 @@ export class Application {
     }
 
     getChatModel = (): LlmModel => {
-        return this.selectedModel;
+        return this.selectedChatModel;
     }
 
     getEmbeddingsModel = (): LlmModel => {
@@ -154,11 +200,11 @@ export class Application {
     }
 
     isComplModelSelected = (): boolean => {
-        return this.selectedComplModel != undefined && this.selectedComplModel.name. trim() != "";
+        return this.selectedComplModel != undefined && this.selectedComplModel.name.trim() != "";
     }
 
     isChatModelSelected = (): boolean => {
-        return this.selectedModel != undefined && this.selectedModel.name. trim() != "";
+        return this.selectedChatModel != undefined && this.selectedChatModel.name. trim() != "";
     }
 
     isToolsModelSelected = (): boolean => {
@@ -193,7 +239,7 @@ export class Application {
                 this.selectedComplModel = model??Application.emptyModel;
                 break;
             case ModelType.Chat:
-                this.selectedModel = model??Application.emptyModel;
+                this.selectedChatModel = model??Application.emptyModel;
                 break;
             case ModelType.Embeddings:
                 this.selectedEmbeddingsModel = model??Application.emptyModel;
@@ -202,7 +248,22 @@ export class Application {
                 this.selectedToolsModel = model??Application.emptyModel;
                 break;
         }
+        if (type === ModelType.Tools) {
+            // VS Code caches LM capabilities for the selected provider/model entry.
+            // Refresh them immediately when the tools model changes so the live picker
+            // does not keep showing stale fallback limits such as the old 12K budget.
+            this.llamaChatModelProvider.notifyModelsChanged();
+        }
         this.llamaWebviewProvider.updateLlamaView();
+    }
+
+    setModelState = (type: ModelType, state: string) => {
+        this.modelState.set(type, state);
+        this.llamaWebviewProvider.updateModels();
+    }
+
+    getModelState = (type: ModelType): string => {
+        return this.modelState.get(type)??"";
     }
 
     setAgentModel = (model: LlmModel | undefined) => {
@@ -210,9 +271,14 @@ export class Application {
         this.llamaWebviewProvider.updateLlamaView();
     }
 
-    public setSelectedEnv(env: Env): void {
+    public async setSelectedEnv(env: Env, persist: boolean = true): Promise<void> {
         this.selectedEnv = env;
-        this.persistence.setValue(PERSISTENCE_KEYS.SELECTED_ENV, env);
         this.llamaWebviewProvider.updateLlamaView();
-    } 
+        if (persist) {
+            await Promise.all([
+                this.persistence.setValue(PERSISTENCE_KEYS.SELECTED_ENV, env),
+                this.persistence.setGlobalValue(PERSISTENCE_KEYS.LAST_USED_ENV, env),
+            ]);
+        }
+    }
 }

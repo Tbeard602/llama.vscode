@@ -3,6 +3,7 @@ import OpenAI from "openai";
 import https from "https";
 import fs from "fs";
 import {translations} from "./translations"
+import { Agent } from "./types";
 import { Utils } from "./utils";
 
 export class Configuration {
@@ -29,6 +30,7 @@ export class Configuration {
     new_embeddings_model_host = "127.0.0.1"
     new_tools_model_host = "127.0.0.1"
     auto = true;
+    debounce_ms = 0;
     api_key = "";
     api_key_chat = "";
     api_key_tools = "";
@@ -46,7 +48,17 @@ export class Configuration {
     ring_chunk_size = 64;
     ring_scope = 1024;
     ring_update_ms = 1000;
+    skills_folder = ""
+    hooks_folder = ""
+    scripts_folder = ""
     language = "en";
+    health_check_interval_s = 30;
+    health_check_compl_enabled = false;
+    health_check_chat_enabled = false;
+    health_check_embs_enabled = false;
+    health_check_tools_enabled = false;
+    only_one_local_model = false;
+
 
     // experimental - avoid using
     use_openai_endpoint = false;
@@ -64,8 +76,10 @@ export class Configuration {
     rag_max_embedding_filter_chunks = 5
     rag_max_context_files = 3
     rag_max_context_file_chars = 10000
+    rag_ignore_file = ""
 
     tool_run_terminal_command_enabled = true;
+    tool_create_agent_enabled = true;
     tool_search_source_enabled = true;
     tool_read_file_enabled = true;
     tool_list_directory_enabled = true;
@@ -73,8 +87,10 @@ export class Configuration {
     tool_delete_file_enabled = true;
     tool_permit_some_terminal_commands = false;
     tool_permit_file_changes = false
+    tool_permit_file_delete = false
     tool_get_diff_enabled = false;
     tool_edit_file_enabled = true;
+    tool_multi_edit_file_enabled = true;
     tool_ask_user_enabled = true;
     tool_custom_tool_enabled = false;
     tool_custom_tool_description = "";
@@ -84,14 +100,24 @@ export class Configuration {
     tool_custom_eval_tool_property_description = ""
     tool_custom_eval_tool_code = "";
     tool_llama_vscode_help_enabled = true;
-    tool_save_plan_enabled = false;
-    tool_update_task_enabled = false;
+    tool_update_todo_list_enabled = true;
+    tool_delegate_task_enabled = true;
+    tool_get_errors_enabled = true;
+    tool_rename_symbol_enabled = true
+    tool_search_tools_enabled = false;
     tools_max_iterations = 50;
+    auto_memory_enabled = true;
+    max_auto_memory_files = 10;
+    plan_review_frequency = 5;
+    reminder_edit_file_frequency = 5
     tools_log_calls = false;
     chats_max_history = 50;
     chats_max_tokens = 64000;
     chats_summarize_old_msgs = false;
     chats_msgs_keep = 50
+    lm_max_input_tokens = 0;
+    lm_max_output_tokens = 0;
+    max_parallel_completions = 3
     completion_models_list = new Array();
     embeddings_models_list = new Array();
     tools_models_list = new Array();
@@ -101,6 +127,7 @@ export class Configuration {
     env_start_last_used_confirm = true;
     ask_install_llamacpp = true;
     ask_upgrade_llamacpp_hours = 24;
+    popup_max_chars = 160;
     ai_api_version = "v1";
     ai_model = "google/gemini-2.5-flash"
     agents_list = new Array();
@@ -116,7 +143,13 @@ export class Configuration {
     axiosRequestConfigEmbeddings = {};
     disabledLanguages: string[] = [];
     languageSettings:Record<string, boolean> = {}
-    
+    telegram_api_token = ""
+    telegram_bot_enabled = false;
+    telegram_bot_users = ""
+    telegram_chunk_size = 250;
+    tools_permission_timeout = 600;
+    send_prompt_from_editor_enabled = false;
+    remove_sent_prompt_from_editor = false;
 
     // TODO: change to snake_case for consistency
     RING_UPDATE_MIN_TIME_LAST_COMPL = 3000;
@@ -186,6 +219,7 @@ export class Configuration {
         this.openai_client_model = String(config.get<string>("openai_client_model"));
         this.openai_prompt_template = String(config.get<string>("openai_prompt_template"));
         this.auto = Boolean(config.get<boolean>("auto"));
+        this.debounce_ms = Number(config.get<number>("debounce_ms"));
         this.api_key = String(config.get<string>("api_key"));
         this.api_key_chat = String(config.get<string>("api_key_chat"));
         this.api_key_tools = String(config.get<string>("api_key_tools"));
@@ -195,6 +229,7 @@ export class Configuration {
         this.n_suffix = Number(config.get<number>("n_suffix"));
         this.n_predict = Number(config.get<number>("n_predict"));
         this.rag_chunk_max_chars = Number(config.get<number>("rag_chunk_max_chars"));
+        this.rag_ignore_file = String(config.get<string>("rag_ignore_file"));
         this.t_max_prompt_ms = Number(config.get<number>("t_max_prompt_ms"));
         this.t_max_predict_ms = Number(config.get<number>("t_max_predict_ms"));
         this.show_info = Boolean(config.get<boolean>("show_info"));
@@ -214,6 +249,7 @@ export class Configuration {
         this.rag_max_context_files = Number(config.get<number>("rag_max_context_files"));
         this.rag_max_context_file_chars = Number(config.get<number>("rag_max_context_file_chars"));
         this.tool_run_terminal_command_enabled = Boolean(config.get<boolean>("tool_run_terminal_command_enabled"));
+        this.tool_create_agent_enabled = Boolean(config.get<boolean>("tool_create_agent_enabled"));
         this.tool_search_source_enabled = Boolean(config.get<boolean>("tool_search_source_enabled"));
         this.tool_read_file_enabled = Boolean(config.get<boolean>("tool_read_file_enabled"));
         this.tool_list_directory_enabled = Boolean(config.get<boolean>("tool_list_directory_enabled"));
@@ -221,13 +257,16 @@ export class Configuration {
         this.tool_delete_file_enabled = Boolean(config.get<boolean>("tool_delete_file_enabled"));
         this.tool_permit_some_terminal_commands = Boolean(config.get<boolean>("tool_permit_some_terminal_commands"));
         this.tool_permit_file_changes = Boolean(config.get<boolean>("tool_permit_file_changes"));
+        this. tool_permit_file_delete = Boolean(config.get<boolean>("tool_permit_file_delete"));
         this.tool_get_diff_enabled = Boolean(config.get<boolean>("tool_get_diff_enabled"));
         this.tool_edit_file_enabled = Boolean(config.get<boolean>("tool_edit_file_enabled"));
+        this.tool_multi_edit_file_enabled = Boolean(config.get<boolean>("tool_multi_edit_file_enabled"));
         this.tool_ask_user_enabled = Boolean(config.get<boolean>("tool_ask_user_enabled"));
         this.tool_custom_tool_enabled = Boolean(config.get<boolean>("tool_custom_tool_enabled"));
-        this.tool_save_plan_enabled = Boolean(config.get<boolean>("tool_save_plan_enabled"));
-        this.tool_update_task_enabled = Boolean(config.get<boolean>("tool_update_task_enabled"));
+        this.tool_update_todo_list_enabled = Boolean(config.get<boolean>("tool_update_todo_list_enabled"));
+        this.tool_delegate_task_enabled = Boolean(config.get<boolean>("tool_delegate_task_enabled"));
         this.tool_llama_vscode_help_enabled = Boolean(config.get<boolean>("tool_llama_vscode_help_enabled"));
+        this.only_one_local_model = Boolean(config.get<boolean>("only_one_local_model"));
         this.tool_custom_tool_description = String(config.get<string>("tool_custom_tool_description"));
         this.tool_custom_tool_source = String(config.get<string>("tool_custom_tool_source"));
         this.tool_custom_eval_tool_enabled = Boolean(config.get<boolean>("tool_custom_eval_tool_enabled"));
@@ -235,11 +274,25 @@ export class Configuration {
         this.tool_custom_eval_tool_description = String(config.get<string>("tool_custom_eval_tool_description"));
         this.tool_custom_eval_tool_code = String(config.get<string>("tool_custom_eval_tool_code"));
         this.tools_max_iterations = Number(config.get<number>("tools_max_iterations"));
+        this.tool_get_errors_enabled = Boolean(config.get<boolean>("tool_get_errors_enabled"));
+        this.tool_rename_symbol_enabled = Boolean(config.get<boolean>("tool_rename_symbol_enabled"));
+        this.tool_search_tools_enabled = Boolean(config.get<boolean>("tool_search_tools_enabled"));
+        this.auto_memory_enabled = Boolean(config.get<boolean>("auto_memory_enabled"));
+        this.max_auto_memory_files = Number(config.get<number>("max_auto_memory_files"));
+        this.plan_review_frequency = Number(config.get<number>("plan_review_frequency"));
+        this.reminder_edit_file_frequency = Number(config.get<number>("reminder_edit_file_frequency"));
         this.tools_log_calls = Boolean(config.get<boolean>("tools_log_calls"));
         this.chats_max_history = Number(config.get<number>("chats_max_history"));
         this.chats_max_tokens = Number(config.get<number>("chats_max_tokens"));
+        this.max_parallel_completions = Number(config.get<number>("max_parallel_completions"));
         this.chats_summarize_old_msgs = Boolean(config.get<boolean>("chats_summarize_old_msgs"));
         this.chats_msgs_keep = Number(config.get<number>("chats_msgs_keep"));
+        this.lm_max_input_tokens = Number(config.get<number>("lm_max_input_tokens"));
+        this.lm_max_output_tokens = Number(config.get<number>("lm_max_output_tokens"));
+        this.popup_max_chars = Number(config.get<number>("popup_max_chars"));
+        this.skills_folder = String(config.get<string>("skills_folder"));
+        this.hooks_folder = String(config.get<string>("hooks_folder"));
+        this.scripts_folder = String(config.get<string>("scripts_folder"));
         this.language = String(config.get<string>("language"));
         this.disabledLanguages = config.get<string[]>("disabledLanguages") || [];
         this.enabled = Boolean(config.get<boolean>("enabled", true));
@@ -249,17 +302,70 @@ export class Configuration {
         this.embeddings_models_list = config.get("embeddings_models_list")??new Array(); 
         this.tools_models_list = config.get("tools_models_list")??new Array();
         this.envs_list = config.get("envs_list")??new Array();
-        this.agents_list = config.get("agents_list")??new Array();
+        this.agents_list = this.normalizeAgents(config.get("agents_list") ?? new Array());
         this.agent_rules = String(config.get<string>("agent_rules"));
         this.agent_commands = config.get("agent_commands")??new Array();
-        this.env_start_last_used = Boolean(config.get<boolean>("env_start_last_used", true));
+        this.env_start_last_used = Boolean(config.get<boolean>("env_start_last_used", false));
         this.tools_custom = config.get("tools_custom")??new Array();
         this.context_custom = config.get("context_custom")??{};
-        this.env_start_last_used = Boolean(config.get<boolean>("env_start_last_used", true));
         this.env_start_last_used_confirm = Boolean(config.get<boolean>("env_start_last_used_confirm", true));
         this.ask_install_llamacpp = Boolean(config.get<boolean>("ask_install_llamacpp", true));
         this.ask_upgrade_llamacpp_hours = Number(config.get<number>("ask_upgrade_llamacpp_hours"));
+        this.health_check_interval_s = Number(config.get<number>("health_check_interval_s"));
+        this.health_check_compl_enabled = Boolean(config.get<boolean>("health_check_compl_enabled"));
+        this.health_check_chat_enabled = Boolean(config.get<boolean>("health_check_chat_enabled"));
+        this.health_check_embs_enabled = Boolean(config.get<boolean>("health_check_embs_enabled"));
+        this.health_check_tools_enabled = Boolean(config.get<boolean>("health_check_tools_enabled"));
+        this.telegram_api_token = String(config.get<string>("telegram_api_token"));
+        this.telegram_bot_enabled = Boolean(config.get<boolean>("telegram_bot_enabled"));
+        this.telegram_bot_users = String(config.get<string>("telegram_bot_users"));
+        this.telegram_chunk_size = Number(config.get<number>("telegram_chunk_size"));
+        this.tools_permission_timeout = Number(config.get<number>("tools_permission_timeout"));
+        this.send_prompt_from_editor_enabled = Boolean(config.get<boolean>("send_prompt_from_editor_enabled"));
+        this.remove_sent_prompt_from_editor = Boolean(config.get<boolean>("remove_sent_prompt_from_editor"));
     };
+
+    private normalizeAgents(rawAgents: unknown): Agent[] {
+        if (!Array.isArray(rawAgents)) {
+            return [];
+        }
+
+        return rawAgents.map((rawAgent) => this.normalizeAgent(rawAgent));
+    }
+
+    private normalizeAgent(rawAgent: unknown): Agent {
+        const agent = (rawAgent && typeof rawAgent === 'object' ? rawAgent : {}) as Record<string, unknown>;
+        const systemInstructionValue = agent.systemInstruction ?? agent.system_instruction ?? [];
+        const subagentEnabledValue = agent.subagentEnabled;
+
+        let systemInstruction: string[];
+        if (Array.isArray(systemInstructionValue)) {
+            systemInstruction = systemInstructionValue.map((value) => String(value));
+        } else if (typeof systemInstructionValue === 'string') {
+            systemInstruction = systemInstructionValue.split(/\r?\n/);
+        } else {
+            systemInstruction = [];
+        }
+
+        let subagentEnabled: boolean | undefined;
+        if (typeof subagentEnabledValue === 'boolean') {
+            subagentEnabled = subagentEnabledValue;
+        } else if (typeof subagentEnabledValue === 'string') {
+            subagentEnabled = subagentEnabledValue.toLowerCase() === 'true';
+        }
+
+        return {
+            ...agent,
+            name: String(agent.name ?? ''),
+            description: agent.description !== undefined ? String(agent.description) : undefined,
+            systemInstruction,
+            subagentEnabled,
+            tools: Array.isArray(agent.tools) ? agent.tools.map((tool) => String(tool)) : undefined,
+            toolsModel: agent.toolsModel && typeof agent.toolsModel === 'object'
+                ? { ...(agent.toolsModel as Record<string, unknown>) }
+                : undefined,
+        } as Agent;
+    }
 
     getUiText = (uiText: string): string | undefined => {
         let langTexts = this.uiLanguages.get(this.language);
@@ -277,13 +383,23 @@ export class Configuration {
             this.setLlamaRequestConfig();
             this.setOpenAiClient();
         }
-        if (event.affectsConfiguration("llama-vscode.env_start_last_used")) this.updateConfigValue("env_start_last_used_confirm", true);
     };
+
+    isAgentReminderSettingChanged = (event: vscode.ConfigurationChangeEvent) => {
+        return event.affectsConfiguration("llama-vscode.reminder_edit_file_frequency")
+            || event.affectsConfiguration("llama-vscode.plan_review_frequency")
+            || event.affectsConfiguration("llama-vscode.tool_update_todo_list_enabled")
+            || event.affectsConfiguration("llama-vscode.tool_edit_file_enabled")
+    }
 
     isEnvViewSettingChanged = (event: vscode.ConfigurationChangeEvent) => {
          return event.affectsConfiguration("llama-vscode.enabled")
             || event.affectsConfiguration("llama-vscode.rag_enabled")
-            || event.affectsConfiguration("llama-vscode.env_start_last_used");
+            || event.affectsConfiguration("llama-vscode.env_start_last_used")
+            || event.affectsConfiguration("llama-vscode.health_check_compl_enabled")
+            || event.affectsConfiguration("llama-vscode.health_check_chat_enabled")
+            || event.affectsConfiguration("llama-vscode.health_check_embs_enabled")
+            || event.affectsConfiguration("llama-vscode.health_check_tools_enabled");
     }
 
     isRagConfigChanged = (event: vscode.ConfigurationChangeEvent) => {
@@ -291,11 +407,24 @@ export class Configuration {
         || event.affectsConfiguration("llama-vscode.rag_max_lines_per_chunk")
         || event.affectsConfiguration("llama-vscode.rag_max_files")
         || event.affectsConfiguration("llama-vscode.rag_max_chars_per_chunk_line")
-        || event.affectsConfiguration("llama-vscode.rag_enabled");
+        || event.affectsConfiguration("llama-vscode.rag_enabled")
+        || event.affectsConfiguration("llama-vscode.rag_ignore_file")
+    }
+
+    isCompletionsEnabledConfigChanged = (event: vscode.ConfigurationChangeEvent) => {
+        return event.affectsConfiguration("llama-vscode.enabled")
+    }
+
+    isTelegramBotConfigChanged = (event: vscode.ConfigurationChangeEvent) => {
+        return event.affectsConfiguration("llama-vscode.telegram_api_token")
+        || event.affectsConfiguration("llama-vscode.telegram_bot_enabled")
+        || event.affectsConfiguration("llama-vscode.telegram_bot_users")
+        || event.affectsConfiguration("llama-vscode.telegram_chunk_size");
     }
 
     isToolChanged = (event: vscode.ConfigurationChangeEvent) => {
         return event.affectsConfiguration("llama-vscode.tool_run_terminal_command_enabled")
+        || event.affectsConfiguration("llama-vscode.tool_create_agent_enabled")
         || event.affectsConfiguration("llama-vscode.tool_search_source_enabled")
         || event.affectsConfiguration("llama-vscode.tool_list_directory_enabled")
         || event.affectsConfiguration("llama-vscode.tool_read_file_enabled")
@@ -306,14 +435,20 @@ export class Configuration {
         || event.affectsConfiguration("llama-vscode.tool_ask_user_enabled")
         || event.affectsConfiguration("llama-vscode.tool_delete_file_enabled")
         || event.affectsConfiguration("llama-vscode.tool_edit_file_enabled")
+        || event.affectsConfiguration("llama-vscode.tool_multi_edit_file_enabled")
         || event.affectsConfiguration("llama-vscode.tool_get_diff_enabled")
         || event.affectsConfiguration("llama-vscode.tool_llama_vscode_help_enabled")
+        || event.affectsConfiguration("llama-vscode.tool_update_todo_list_enabled")
+        || event.affectsConfiguration("llama-vscode.tool_delegate_task_enabled")
         || event.affectsConfiguration("llama-vscode.tool_custom_eval_tool_enabled")
         || event.affectsConfiguration("llama-vscode.tool_custom_eval_tool_description")
         || event.affectsConfiguration("llama-vscode.tool_custom_eval_tool_property_description")
         || event.affectsConfiguration("llama-vscode.tool_update_task_enabled")
         || event.affectsConfiguration("llama-vscode.tool_save_plan_enabled")
         || event.affectsConfiguration("llama-vscode.tools_custom")
+        || event.affectsConfiguration("llama-vscode.tool_get_errors_enabled")
+        || event.affectsConfiguration("llama-vscode.tool_rename_symbol_enabled")
+        || event.affectsConfiguration("llama-vscode.tool_search_tools_enabled")
     }
 
     setLlamaRequestConfig = () => {
@@ -388,7 +523,31 @@ export class Configuration {
         return true;
     }
 
-    updateConfigValue = async (settingName: string, value: any) => {
-        await this.config.update(settingName, value, true);
+    getEnvStartLastUsedScope = (): vscode.ConfigurationTarget => {
+        const inspected = this.config.inspect<boolean>("env_start_last_used");
+        if (inspected?.workspaceValue !== undefined) return vscode.ConfigurationTarget.Workspace;
+        if (inspected?.globalValue !== undefined) return vscode.ConfigurationTarget.Global;
+        return vscode.ConfigurationTarget.Workspace;
+    }
+
+    updateEnvStartLastUsed = async (value: boolean) => {
+        const inspected = this.config.inspect<boolean>("env_start_last_used");
+        const target = inspected?.workspaceValue !== undefined
+            ? vscode.ConfigurationTarget.Workspace
+            : vscode.ConfigurationTarget.Global;
+        await this.updateConfigValue("env_start_last_used", value, target);
+    }
+
+    updateEnvStartLastUsedConfirm = async (value: boolean) => {
+        const confirm = this.config.inspect<boolean>("env_start_last_used_confirm");
+        const target = this.getEnvStartLastUsedScope() === vscode.ConfigurationTarget.Workspace
+            || confirm?.workspaceValue !== undefined
+            ? vscode.ConfigurationTarget.Workspace
+            : vscode.ConfigurationTarget.Global;
+        await this.updateConfigValue("env_start_last_used_confirm", value, target);
+    }
+
+    updateConfigValue = async (settingName: string, value: any, target: vscode.ConfigurationTarget = vscode.ConfigurationTarget.Global) => {
+        await this.config.update(settingName, value, target);
     }
 }

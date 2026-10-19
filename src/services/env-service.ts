@@ -9,11 +9,30 @@ import * as path from "path";
 import { PREDEFINED_LISTS } from "../lists";
 import { ModelType, UI_TEXT_KEYS, PERSISTENCE_KEYS, SETTING_NAME_FOR_LIST, PREDEFINED_LISTS_KEYS } from "../constants";
 
+type EnvSelectionMode = "fresh" | "restoration";
+
 export class EnvService {
     private app: Application;
 
     constructor(app: Application) {
         this.app = app;
+    }
+
+    private getValidPersistedEnv(value: unknown): Env | undefined {
+        if (!value || typeof value !== "object") return undefined;
+        const env = value as Env;
+        return typeof env.name === "string" && env.name.trim() !== "" ? env : undefined;
+    }
+
+    getWorkspaceSelectedEnv(): Env | undefined {
+        return this.getValidPersistedEnv(this.app.persistence.getValue(PERSISTENCE_KEYS.SELECTED_ENV));
+    }
+
+    getPersistedEnvForAutoStart(): Env | undefined {
+        const value = this.app.configuration.getEnvStartLastUsedScope() === vscode.ConfigurationTarget.Workspace
+            ? this.app.persistence.getValue(PERSISTENCE_KEYS.SELECTED_ENV)
+            : this.app.persistence.getGlobalValue(PERSISTENCE_KEYS.LAST_USED_ENV);
+        return this.getValidPersistedEnv(value);
     }
 
     getActions(): vscode.QuickPickItem[] {
@@ -52,7 +71,7 @@ export class EnvService {
                 await this.selectEnv(this.app.configuration.envs_list, true);
                 break;
             case this.app.configuration.getUiText(UI_TEXT_KEYS.addEnv):
-                this.app.llamaWebviewProvider.showEnvView();
+                this.app.llamaWebviewProvider.showEnvViewInUi();
                 break;
                 break;
             case this.app.configuration.getUiText(UI_TEXT_KEYS.deleteEnv):
@@ -80,28 +99,29 @@ export class EnvService {
         let allEnvs = envsList.concat(PREDEFINED_LISTS.get(PREDEFINED_LISTS_KEYS.ENVS) as Env[]);
         let envsItems: QuickPickItem[] = this.getStandardQpList(envsList, "");
         envsItems = envsItems.concat(this.getStandardQpList(PREDEFINED_LISTS.get(PREDEFINED_LISTS_KEYS.ENVS) as Env[], "(predefined) ", envsList.length));
-        let lastUsedEnv = this.app.persistence.getValue(PERSISTENCE_KEYS.SELECTED_ENV) as Env;
-        if (lastUsedEnv && lastUsedEnv.name.trim() !== "") {
+        let lastUsedEnv = this.getWorkspaceSelectedEnv();
+        if (lastUsedEnv) {
             envsItems.push({ label: (envsItems.length + 1) + ". Last used env", description: lastUsedEnv.name });
         }
         const envItem = await vscode.window.showQuickPick(envsItems);
         if (envItem) {
             let selectedEnv: Env;
             if (envItem.label.includes("Last used env")) {
+                if (!lastUsedEnv) return undefined;
                 selectedEnv = lastUsedEnv;
             } else {
                 const index = parseInt(envItem.label.split(". ")[0], 10) - 1;
                 selectedEnv = allEnvs[index];
             }
             if (selectedEnv) {
-                await this.selectStartEnv(selectedEnv, confirm);
+                await this.selectStartEnv(selectedEnv, confirm, "fresh");
                 return selectedEnv;
             }
         }
         return undefined;
     }
 
-    async selectStartEnv(env: Env, confirm: boolean = false): Promise<void> {
+    async selectStartEnv(env: Env, confirm: boolean = false, selectionMode: EnvSelectionMode = "fresh"): Promise<void> {
         // Get current state for inheritance
         const currentComplModel = this.app.getComplModel();
         const currentChatModel = this.app.getChatModel();
@@ -132,13 +152,18 @@ export class EnvService {
                 envStartLastUsed: env.envStartLastUsed ?? currentEnvStartLastUsed,
                 complEnabled: env.complEnabled ?? currentComplEnabled,
             };
-            shouldSelect = await Utils.confirmAction(
+            shouldSelect = await this.app.dialogs.confirmAction(
                 "You are about to select the env below. If there are local models inside, they will be downloaded (if not yet done) and llama.cpp server(s) will be started.\n\n Do you want to continue?",
                 this.getEnvDetailsAsString(tempEnv)
             );
         }
 
         if (shouldSelect && env) {
+            if (selectionMode === "restoration") {
+                // Keep the restored environment visible even if one of its model startups fails.
+                await this.app.setSelectedEnv(env, false);
+            }
+
             // Set completion model (inherit if not specified)
             const complModel = env.completion ?? currentComplModel;
             this.app.setSelectedModel(ModelType.Completion, complModel);
@@ -176,6 +201,9 @@ export class EnvService {
                 await this.app.modelService.addApiKey(toolsModel);
                 if (toolsModel.localStartCommand) {
                     await this.app.llamaServer.shellToolsCmd(this.app.modelService.sanitizeCommand(toolsModel.localStartCommand));
+                    // Loading can change what /v1/models and /props report for the selected
+                    // model, so fire another refresh after the server is actually running.
+                    this.app.llamaChatModelProvider.notifyModelsChanged();
                 }
             }
 
@@ -189,17 +217,16 @@ export class EnvService {
             if (env.ragEnabled !== undefined) {
                 this.app.configuration.updateConfigValue("rag_enabled", env.ragEnabled);
             }
-            if (env.envStartLastUsed !== undefined) {
-                this.app.configuration.updateConfigValue("env_start_last_used", env.envStartLastUsed);
+            if (env.envStartLastUsed !== undefined && env.envStartLastUsed !== this.app.configuration.env_start_last_used) {
+                await this.app.configuration.updateEnvStartLastUsed(env.envStartLastUsed);
             }
             if (env.complEnabled !== undefined) {
                 this.app.configuration.updateConfigValue("enabled", env.complEnabled);
             }
 
-            // Set selected env
-            this.app.setSelectedEnv(env);
-
-            this.app.llamaWebviewProvider.updateLlamaView();
+            if (selectionMode === "fresh") {
+                await this.app.setSelectedEnv(env);
+            }
         }
     }
 
@@ -249,14 +276,14 @@ export class EnvService {
         await this.persistEnv(newEnv, envsList, settingName);
     }
 
-    private async persistEnv(newEnv: Env, envsList: Env[], settingName: string): Promise<void> {
+    persistEnv = async (newEnv: Env, envsList: Env[], settingName: string): Promise<void> => {
         let envDetails = this.getEnvDetailsAsString(newEnv);
-        const shouldAddEnv = await Utils.confirmAction("A new env will be added. Do you want to add the env?", envDetails);
+        const shouldAddEnv = await this.app.dialogs.confirmAction("A new env will be added. Do you want to add the env?", envDetails);
 
         if (shouldAddEnv) {
             envsList.push(newEnv);
             this.app.configuration.updateConfigValue(settingName, envsList);
-            vscode.window.showInformationMessage("The env is added.");
+            vscode.window.showInformationMessage("The env is added: " + newEnv.name);
         }
     }
 
@@ -265,7 +292,7 @@ export class EnvService {
         const envItem = await vscode.window.showQuickPick(envsItems);
         if (envItem) {
             let envIndex = parseInt(envItem.label.split(". ")[0], 10) - 1;
-            const shouldDeleteEnv = await Utils.confirmAction("Are you sure you want to delete the following env?",
+            const shouldDeleteEnv = await this.app.dialogs.confirmAction("Are you sure you want to delete the following env?",
                 this.getEnvDetailsAsString(envsList[envIndex])
             );
             if (shouldDeleteEnv) {
@@ -285,7 +312,7 @@ export class EnvService {
             let envIndex = parseInt(envItem.label.split(". ")[0], 10) - 1;
             let selectedEnv = allEnvs[envIndex];
             let envDetails = this.getEnvDetailsAsString(selectedEnv);
-            await Utils.showOkDialog(envDetails);
+            await this.app.dialogs.showOkDialog(envDetails);
         }
     }
 
@@ -299,8 +326,12 @@ export class EnvService {
         await this.app.llamaServer.killToolsCmd();
         this.app.setSelectedModel(ModelType.Tools, { name: "", localStartCommand: "" });
         await this.app.agentService.deselectAgent();
-        this.app.setSelectedEnv({ name: "" });
-        this.app.llamaWebviewProvider.updateLlamaView();
+        if (this.app.configuration.getEnvStartLastUsedScope() === vscode.ConfigurationTarget.Workspace) {
+            await this.app.persistence.deleteValue(PERSISTENCE_KEYS.SELECTED_ENV);
+        } else {
+            await this.app.persistence.deleteGlobalValue(PERSISTENCE_KEYS.LAST_USED_ENV);
+        }
+        await this.app.setSelectedEnv({ name: "" }, false);
         vscode.window.showInformationMessage("Env, models and agent are deselected.")
     }
 
@@ -312,7 +343,7 @@ export class EnvService {
         if (envItem) {
             let envIndex = parseInt(envItem.label.split(". ")[0], 10) - 1;
             let selectedEnv = allEnvs[envIndex];
-            let shouldExport = await Utils.showYesNoDialog("Do you want to export the following env? \n\n" +
+            let shouldExport = await this.app.dialogs.showYesNoDialog("Do you want to export the following env? \n\n" +
                 this.getEnvDetailsAsString(selectedEnv)
             );
 
@@ -455,7 +486,7 @@ export class EnvService {
     }
 
     public showCurrentEnv() {
-        Utils.showOkDialog(this.getSelectionsAsString());
+        this.app.dialogs.showOkDialog(this.getSelectionsAsString());
     }
 
     private getSelectionsAsString() {

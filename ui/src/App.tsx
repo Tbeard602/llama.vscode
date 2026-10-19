@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { AgentView, AIRunnerView, AddEnvView, AgentEditor } from './components';
+import React, { useState, useEffect, useRef } from 'react';
+import { AgentView, AIRunnerView, AddEnvView, AgentEditor, AgentCommandEditor } from './components';
 import { vscode } from './types/vscode';
 
 interface AppProps { }
@@ -10,6 +10,7 @@ const App: React.FC<AppProps> = () => {
   const noAgentSelected = 'No agent selected';
   const noViewSet = 'agent';
   const viewAgentEditor = 'agenteditor'
+  const viewAgentCommandEditor = 'agentcommandeditor'
   const viewAiRunner = "airunner"
   const viewAddEnv = "addenv"
   
@@ -51,7 +52,7 @@ const App: React.FC<AppProps> = () => {
   const [contextFiles, setContextFiles] = useState<Map<string, string>>(new Map());
   const [imagePath, setContextImage] = useState<string>("");
   const [agentEditTools, setAgentEditTools] = useState<Map<string, string>>(new Map());
-  const [agentEditDetails, setAgentEditDetails] = useState<{name:string, description:string, systemInstruction:string, toolsModel: string}>({name:"", description:"", systemInstruction:"", toolsModel:""});
+  const [agentEditDetails, setAgentEditDetails] = useState<{name:string, description:string, systemInstruction:string, toolsModel: string, subagentEnabled: boolean}>({name:"", description:"", systemInstruction:"", toolsModel:"", subagentEnabled: false});
 
   // Save state to VS Code whenever it changes
   useEffect(() => {
@@ -106,10 +107,10 @@ const App: React.FC<AppProps> = () => {
           setContextImage(message.image || "");
           break;
         case 'updateAgentEdit':
-          setAgentEditDetails({name: message.name, description: message.description, systemInstruction: message.systemInstruction, toolsModel: message.toolsModel});
+          setAgentEditDetails({name: message.name, description: message.description, systemInstruction: message.systemInstruction, toolsModel: message.toolsModel,subagentEnabled: message.subagentEnabled});
           break;
         case 'loadAgent':
-          setAgentEditDetails({name: message.name, description: message.description, systemInstruction: message.systemInstruction, toolsModel: message.toolsModel});
+          setAgentEditDetails({name: message.name, description: message.description, systemInstruction: message.systemInstruction, toolsModel: message.toolsModel, subagentEnabled: message.subagentEnabled});
           setCurrentAgentModel(message.toolsModel);
           setAgentEditTools(new Map(message.tools || []));
           break;
@@ -151,6 +152,38 @@ const App: React.FC<AppProps> = () => {
       command: 'showAgentEditor'
     });
   };
+
+  const handleShowAgentCommandEditor = () => {
+    vscode.postMessage({
+      command: 'showAgentCommandEditor'
+    });
+  };
+
+  const [showLocationMenu, setShowLocationMenu] = useState<boolean>(false);
+  const moreActionsRef = useRef<HTMLDivElement>(null);
+
+  const handleShowMoreActions = () => {
+    setShowLocationMenu(prev => !prev);
+  };
+
+  const handleMoveAgentView = (location: string) => {
+    setShowLocationMenu(false);
+    vscode.postMessage({
+      command: 'showAgentViewLocation',
+      location: location
+    });
+  };
+
+  // Close the dropdown when clicking outside of it
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (moreActionsRef.current && !moreActionsRef.current.contains(event.target as Node)) {
+        setShowLocationMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const handleSelectedModels = () => {
     vscode.postMessage({
@@ -200,6 +233,40 @@ const App: React.FC<AppProps> = () => {
                   >
                     {"✎"}
                   </button>
+                  <button
+                    onClick={handleShowAgentCommandEditor}
+                    className="header-btn secondary"
+                    title="Show Edit Agent Command View"
+                  >
+                    {">_"}
+                  </button>
+                  <div className="more-actions-container" ref={moreActionsRef}>
+                    <button
+                      onClick={handleShowMoreActions}
+                      className={`header-btn secondary ${showLocationMenu ? 'active' : ''}`}
+                      title="More Actions..."
+                    >
+                      ...
+                    </button>
+                    {showLocationMenu && (
+                      <div className="more-actions-menu" role="menu">
+                        <button
+                          role="menuitem"
+                          className="more-actions-item"
+                          onClick={() => handleMoveAgentView('left')}
+                        >
+                          Show on the Left Side
+                        </button>
+                        <button
+                          role="menuitem"
+                          className="more-actions-item"
+                          onClick={() => handleMoveAgentView('right')}
+                        >
+                          Show on the Right Side
+                        </button>
+                      </div>
+                    )}
+                  </div>
               </div>
             </div>
           </div>
@@ -238,6 +305,12 @@ const App: React.FC<AppProps> = () => {
             agentEditDetails={agentEditDetails}
             setAgentEditDetails = {setAgentEditDetails}
           />
+        </div>
+      )}
+
+      {view === viewAgentCommandEditor && (
+        <div>
+          <AgentCommandEditor />
         </div>
       )}
 

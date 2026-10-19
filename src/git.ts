@@ -1,6 +1,7 @@
 import { Application } from "./application";
 import vscode from "vscode";
 import { Utils } from "./utils";
+import { ModelType, PERSISTENCE_KEYS } from "./constants";
 
 
 export class Git {
@@ -15,12 +16,16 @@ export class Git {
         if (!chatUrl) chatUrl = this.app.configuration.endpoint_tools;
         let chatModel = this.app.getChatModel();    
         if (!this.app.isChatModelSelected() && !this.app.configuration.endpoint_chat) chatModel = this.app.getToolsModel();
+        if (!chatModel.endpoint) {
+            await this.app.modelService.selectDefaultModel(ModelType.Chat, PERSISTENCE_KEYS.DEFAULT_CHAT_MODEL);
+            chatModel = this.app.getChatModel();
+        }
         if (chatModel.endpoint) {
             const chatEndpoint = Utils.trimTrailingSlash(chatModel.endpoint)
             chatUrl = chatEndpoint ? chatEndpoint + "/" : "";
         }
         if (!chatUrl) {
-            await Utils.suggestModelSelection(
+            await this.app.dialogs.suggestModelSelection(
                 "Select a chat or tools model or an env with chat or tools model to generate a commit message.",
                 "After the chat/tools model is loaded, try again generating commit message.",
                 "No endpoint for the chat model. Select a chat or tools model or an env with chat or tools model or enter the endpoint of a server with chat model in setting endpoint_chat.",

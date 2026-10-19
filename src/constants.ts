@@ -25,6 +25,13 @@ export enum Action {
   Import = 'import'
 }
 
+export enum HooksEvents {
+  preToolUse = 'preToolUse',
+  postToolUse = 'postToolUse',
+  userPromptSubmit = 'userPromptSubmit',
+  stop = 'stop'
+}
+
 export const MODEL_TYPE_CONFIG = {
   [ModelType.Completion]: {
     settingName: 'completion_models_list',
@@ -65,17 +72,17 @@ export const MODEL_TYPE_CONFIG = {
 } as const;
 
 export const LOCAL_MODEL_TEMPLATES = {
-  [ModelType.Completion]: 'llama-server -hf <model name from hugging face, i.e: ggml-org/Qwen2.5-Coder-1.5B-Q8_0-GGUF> -ngl 99 -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 --port PORT_PLACEHOLDER --host HOST_PLACEHOLDER',
-  [ModelType.Chat]: 'llama-server -hf <model name from hugging face, i.e: ggml-org/Qwen2.5-Coder-7B-Instruct-Q8_0-GGUF> -ngl 99 -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port PORT_PLACEHOLDER --host HOST_PLACEHOLDER',
-  [ModelType.Embeddings]: 'llama-server -hf <model name from hugging face, i.e: ggml-org/Nomic-Embed-Text-V2-GGUF> -ngl 99 -ub 2048 -b 2048 --ctx-size 2048 --embeddings --port PORT_PLACEHOLDER --host HOST_PLACEHOLDER',
-  [ModelType.Tools]: 'llama-server -hf <model name from hugging face, i.e: unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF:Q8_0> --jinja  -ngl 99 -c 0 -ub 1024 -b 1024 --cache-reuse 256 --port PORT_PLACEHOLDER --host HOST_PLACEHOLDER'
+  [ModelType.Completion]: 'llama serve -hf <model name from hugging face, i.e: ggml-org/Qwen2.5-Coder-1.5B-Q8_0-GGUF> -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 --port PORT_PLACEHOLDER --host HOST_PLACEHOLDER',
+  [ModelType.Chat]: 'llama serve -hf <model name from hugging face, i.e: ggml-org/Qwen2.5-Coder-7B-Instruct-Q8_0-GGUF> -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port PORT_PLACEHOLDER --host HOST_PLACEHOLDER',
+  [ModelType.Embeddings]: 'llama serve -hf <model name from hugging face, i.e: ggml-org/Nomic-Embed-Text-V2-GGUF> -ub 2048 -b 2048 --ctx-size 2048 --embeddings --port PORT_PLACEHOLDER --host HOST_PLACEHOLDER',
+  [ModelType.Tools]: 'llama serve -hf <model name from hugging face, i.e: unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF:Q8_0> -c 0 -ub 1024 -b 1024 --cache-reuse 256 --port PORT_PLACEHOLDER --host HOST_PLACEHOLDER'
 } as const;
 
 export const HF_MODEL_TEMPLATES = {
-  [ModelType.Completion]: 'llama-server -hf MODEL_PLACEHOLDER -ngl 99 -ub 1024 -b 1024 -dt 0.1 --ctx-size 0 --cache-reuse 256 --port PORT_PLACEHOLDER --host HOST_PLACEHOLDER',
-  [ModelType.Chat]: 'llama-server -hf MODEL_PLACEHOLDER -ngl 99 -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port PORT_PLACEHOLDER --host HOST_PLACEHOLDER',
-  [ModelType.Embeddings]: 'llama-server -hf MODEL_PLACEHOLDER -ngl 99 -ub 2048 -b 2048 --ctx-size 2048 --embeddings --port PORT_PLACEHOLDER --host HOST_PLACEHOLDER',
-  [ModelType.Tools]: 'llama-server -hf MODEL_PLACEHOLDER --jinja  -ngl 99 -c 0 -ub 1024 -b 1024 --cache-reuse 256 --port PORT_PLACEHOLDER --host HOST_PLACEHOLDER'
+  [ModelType.Completion]: 'llama serve -hf MODEL_PLACEHOLDER -ub 1024 -b 1024 -dt 0.1 --ctx-size 0 --cache-reuse 256 --port PORT_PLACEHOLDER --host HOST_PLACEHOLDER',
+  [ModelType.Chat]: 'llama serve -hf MODEL_PLACEHOLDER -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256 -np 2 --port PORT_PLACEHOLDER --host HOST_PLACEHOLDER',
+  [ModelType.Embeddings]: 'llama serve -hf MODEL_PLACEHOLDER -ub 2048 -b 2048 --ctx-size 2048 --embeddings --port PORT_PLACEHOLDER --host HOST_PLACEHOLDER',
+  [ModelType.Tools]: 'llama serve -hf MODEL_PLACEHOLDER --jinja  -c 0 -ub 1024 -b 1024 --cache-reuse 256 --port PORT_PLACEHOLDER --host HOST_PLACEHOLDER'
 } as const;
 
 export const SETTING_TO_MODEL_TYPE: Record<string, ModelType> = {
@@ -88,6 +95,17 @@ export const SETTING_TO_MODEL_TYPE: Record<string, ModelType> = {
 export enum AGENT_NAME {
   default = 'default',
   llamaVscodeHelp = 'llama-vscode help'
+}
+
+export const AGENT_COMMAND = {
+  scrip_file_suffix: '.lvs',
+  type_preffix_script: 's', //should be one character
+  type_preffix_prompt: 'p' //should be one character
+}
+
+export const TOOLS_DESC = {
+  prefixEditFile: "Edited file ",
+  prefixMultiEditFile: "Multi-edited file ",
 }
 
 export const UI_TEXT_KEYS = {
@@ -133,15 +151,14 @@ export const UI_TEXT_KEYS = {
   enabled: "enabled",
   disabled: "disabled",
   rag: "RAG",
-  turnOffRAG: "Turn off RAG related features like Chat with AI with project context",
-  turnOnRAG: "Turn on RAG related features like Chat with AI with project context",
+  turnOffRAG: "Turn off RAG related features like tool search_source",
+  turnOnRAG: "Turn on RAG related features like tool search_source",
 
   // UI actions
   showLlamaAgent: "Show Llama Agent",
   showLlamaAgentDescription: "Shows Llama Agent panel",
   chatWithAI: "Chat with AI",
   chatWithAIDescription: "Opens a chat with AI window inside VS Code using the selected chat model (or setting endpoint_chat)",
-  chatWithAIWithProjectContext: "Chat with AI with project context",
   showSelectedModels: "Show selected models",
   showSelectedModelsDescription: "Displays a list of currently selected models",
   useAsLocalAIRunner: "Use as local AI runner",
@@ -187,6 +204,7 @@ export const UI_TEXT_KEYS = {
   // Agent command actions
   addAgentCommand: "Add agent command...",
   viewAgentCommandDetails: "View agent command details...",
+  editAgentCommandDetails: "Edit agent command...",
   deleteAgentCommand: "Delete agent command...",
   exportAgentCommand: "Export agent command...",
   importAgentCommand: "Import agent command...",
@@ -245,14 +263,79 @@ export const UI_TEXT_KEYS = {
   exportToolsModel: "Export tools model...",
   importToolsModel: "Import tools model...",
 
+  // Telegram bot
+  telegramTheUser: "the user",
+  telegramUserNotAuthorized: "is not authorized to access the agent. Add the user ID in setting telegram_bot_users of llama-vscode extension. You could find your telegram user ID by sending command /start to @userinfobot.",
+  telegramStopRequestSent: "Stop request is sent to the agent.",
+  telegramAgentRunningWait: "The agent is already running. Please wait for it to finish.",
+  telegramAgentRunning: "The agent is running",
+  telegramAgentNotRunnin: "The agent is NOT running",
+  telegramHelpSendPrompt: "Send a prompt to the bot in this chat and it will be forwarded to your llama-vscode agent.",
+  telegramHelpConfigure: "You could also configure the agent and get additional information with bot commands (starting with '/').",
+  telegramHelpAgentCommands: "You could execute llama-vscode agent commands - use prefix '//' for example //about .",
+  telegramEnterCorrectAgent: "Please enter correct agent number. (see the numbers with /agents command).",
+  telegramAgentSetTo: "Agent set to",
+  telegramAgentNotFound: "Agent not found.",
+  telegramEnterAgentNumber: "Please enter agent number.",
+  telegramEnterCorrectModel: "Please enter correct model number. (see the numbers with /models command).",
+  telegramModelSetTo: "Model set to",
+  telegramEnterCorrectLanguage: "Please enter correct language.", 
+  telegramAvailableLanguages: "The available languages are:",
+  telegramLanguageSetTo: "The language is set to",
+  telegramUnknownCommand: "Unknown command",
+  telegramCmdEnvDesc: "shows the current tools model and agent",
+  telegramCmdModelsDesc: "shows the available models",
+  telegramCmdAgentsDesc: "shows the available agents",
+  telegramCmdSetModelDesc: "sets the model to the n-th model. (models numbers are available from command /models)",
+  telegramCmdSetAgentDesc: "sets the agent to the n-th agent. (agents numbers are available from command /agents)",
+  telegramCmdStopDesc: "stops the agent",
+  telegramCmdStatusDesc: "shows the current status of the agent",
+  telegramCmdChatDesc: "gets the last n characters of the current chat. If n is not specified, the last 1000 characters are returned.",
+  telegramCmdHelpDesc: "gets help for using this bot",
+  telegramCmdShowCommandsDesc: "shows the available bot commands",
+  telegramCmdShowAgentCommandsDesc: "shows the available agent commands",
+  telegramCmdSetLangDesc: "Sets the bot language to the provided language.",
+  telegramCmdNewChatDesc: "Stops the current chat and starts a new one.",
+  telegramNewChatRequested: "New chat is requested.",
+  telegramAvailableCommands: "The available bot commands are:",
+  telegramCurrentChat: "Current chat:",
+  telegramCmdToolsDesc: "shows all tools, active with a ✓ prefix",
+  telegramCmdAddToolsDesc: "adds the provided tools. (tools numbers are available from command /tools)",
+  telegramCmdRemoveToolsDesc: "removes the provided tools. (tools numbers are available from command /tools)",
+  telegramAvailableModels: "Available models:",
+  telegramAvailableAgents: "Available agents:",
+  telegramAvailableTools: "Available tools:",
+  telegramEnterCorrectTools: "Please enter correct tools numbers (see the numbers with /tools command).",
+  telegramToolsIncorrectNumbers: "Tools with incorrect numbers:",
+  telegramRemovedTools:  "Removed tools:",
+  telegramAddedTools: "Added tools:",
+  telegramAnswerExactly: "Answer exacly with one of the following:",
+  telegramAnswerFirst: "Answer the question first.",
+
+
   // Other
-  fileUpdated: "The file is updated"
+  fileUpdated: "The file is updated",
+  extensionName: "llama-vscode"
 } as const;
 
 export const PERSISTENCE_KEYS = {
   SELECTED_CHAT: 'selectedChat' as const,
   SELECTED_AGENT: 'selectedAgent' as const,
   SELECTED_ENV: 'selectedEnv' as const,
+  LAST_USED_ENV: 'lastUsedEnv' as const,
+  DEFAULT_COMPL_MODEL: 'defaulComplModel' as const,
+  DEFAULT_CHAT_MODEL: 'defaulChatModel' as const,
+  DEFAULT_EMBS_MODEL: 'defaulEmbsModel' as const,
+  DEFAULT_TOOLS_MODEL: 'defaulToolsModel' as const,
+  EXTENSION_VERSION: 'extensionVersion' as const,
+} as const;
+
+export const CONFIRMATION_STATE = {
+  INACTIVE: 'inactive' as const,
+  WAITING: 'waiting' as const,
+  YES: 'yes' as const,
+  NO: 'no' as const,
+  YES_DONT_ASK: "yes, don't ask again" as const,
 } as const;
 
 export const SETTING_NAME_FOR_LIST = {
@@ -275,12 +358,36 @@ export const PREDEFINED_LISTS_KEYS = {
   AGENT_COMMANDS: SETTING_NAME_FOR_LIST.AGENT_COMMANDS,
 } as const;
 
+export const TELEGRAM_BOT_COMMANDS = {
+  SHOW_CHAT: "/chat" as const,
+  SHOW_ENVIRONMENT: "/env" as const,
+  SHOW_MODELS: "/models" as const,
+  SHOW_AGENTS: "/agents" as const,
+  SET_MODEL: "/setmodel" as const,
+  SET_AGENT: "/setagent" as const,
+  STOP_AGENT: "/stop" as const,
+  SET_LANGUAGE: "/setlang" as const,
+  NEW_CHAT: "/newchat" as const,
+  NEW_CHAT_SHORT: "/new" as const,
+  SHOW_AGENT_STATUS: "/status" as const,
+  SHOW_BOT_COMMANDS: "/" as const,
+  SHOW_AGENT_COMMANDS: "//" as const,
+  SHOW_TOOLS: "/tools" as const,
+  ADD_TOOLS: "/addtools" as const,
+  REMOVE_TOOLS: "/removetools" as const,
+  SHOW_HELP: "/help" as const,
+} as const;
+
 export enum OpenAiProvidersKeys {
   OpenRouter = 'OpenRouter...',
+  OrcaRouter = 'OrcaRouter...',
+  AtlasCloud = 'Atlas Cloud...',
   Custom = 'Custom...'
 }
 export const OPENAI_COMP_PROVIDERS = {
   [OpenAiProvidersKeys.OpenRouter]: "https://openrouter.ai/api",
+  [OpenAiProvidersKeys.OrcaRouter]: "https://api.orcarouter.ai",
+  [OpenAiProvidersKeys.AtlasCloud]: "https://api.atlascloud.ai",
   [OpenAiProvidersKeys.Custom]: ""
 } as const
 
@@ -289,4 +396,4 @@ export const SUPPORTED_IMG_FILE_EXTS: { [key: string]: string } = {
     '.jpg': 'image/jpeg',
     '.png': 'image/png',
     '.webp': 'image/webp'
-} as const;;
+} as const;

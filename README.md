@@ -13,7 +13,7 @@ Local LLM-assisted text completion, chat with AI and agentic coding extension fo
 - Auto-suggest on input
 - Accept a suggestion with `Tab`
 - Accept the first line of a suggestion with `Shift + Tab`
-- Accept the next word with `Ctrl/Cmd + Right`
+- Accept the next word with `Ctrl/Cmd + Right Arrow`
 - Toggle the suggestion manually by pressing `Ctrl + L`
 - Control max text generation time
 - Configure scope of context around the cursor
@@ -21,12 +21,15 @@ Local LLM-assisted text completion, chat with AI and agentic coding extension fo
 - [Supports very large contexts even on low-end hardware via smart context reuse](https://github.com/ggerganov/llama.cpp/pull/9787)
 - Display performance stats
 - Llama Agent for agentic coding
+- Access to the llama-vscode agents from phone via a Telegram bot
+- Deep links [vscode://ggml-org.llama-vscode?view=agent&prompt=Hello](vscode://ggml-org.llama-vscode?view=agent&prompt=Hello) opens VS Code (if not open), shows lama-vscode agent view and enters "Hello" as a prompt
+- Kimi K3 - support for [dynamically loaded tools](https://platform.kimi.ai/docs/guide/use-dynamic-tool-loading) (tools on demand) when used from moonshot.ai.
 - Add/remove/export/import for models - completion, chat, embeddings and tools
 - Model selection - for completion, chat, embeddings and tools
 - Env (group of models) concept introduced. Selecting/Deselecting env selects/deselects all the models in it
 - Add/remove/export/import for env
-- Predefined models (including OpenAI gpt-oss 20B added as a local one) 
-- Predefined envs for different use cases - only completion, chat + completion, chat + agent, loccal full package (with gpt-oss 20B), etc.
+- Predefined models - both local and external, including DeepSeek V4 Flash 0731, Qwen3.7 Flash, GPT-6 Astra, Claude Fable 5.1, etc.
+- Predefined envs for different use cases - only completion, chat + completion, chat + agent, etc.
 - MCP tools selection for the agent (from VS Code installed MCP Servers)
 - Search and download models from Huggingface directly from llama-vscode
 
@@ -41,6 +44,11 @@ Install the [llama-vscode](https://marketplace.visualstudio.com/items?itemName=g
 Note: also available at [Open VSX](https://open-vsx.org/extension/ggml-org/llama-vscode)
 
 ### `llama.cpp` setup
+- Now automatic on starting llama-vscode - from the [official llama.cpp shell script](https://llama.app/) or from brew (Mac, Linux) or Winget (Windows). The details below for the manual installation are left for reference.
+
+**Prerequisites:**
+- For macOS: [Homebrew](https://brew.sh) must be installed
+- For Windows: Windows Package Manager (winget) is required
 
 Show llama-vscode menu by clicking on llama-vscode in the status bar or Ctrl+Shift+M and select "Install/Upgrade llama.cpp". This will install llama.cpp automatically for Mac and Windows. For Linux get the [latest binaries](https://github.com/ggerganov/llama.cpp/releases) and add the bin folder to the path.
 
@@ -71,40 +79,40 @@ Here are recommended settings, depending on the amount of VRAM that you have:
 - More than 64GB VRAM:
 
   ```bash
-  llama-server --fim-qwen-30b-default
+  llama serve --fim-qwen-30b-default
   ```
 
 - More than 16GB VRAM:
 
   ```bash
-  llama-server --fim-qwen-7b-default
+  llama serve --fim-qwen-7b-default
   ```
 
 - Less than 16GB VRAM:
 
   ```bash
-  llama-server --fim-qwen-3b-default
+  llama serve --fim-qwen-3b-default
   ```
 
 - Less than 8GB VRAM:
 
   ```bash
-  llama-server --fim-qwen-1.5b-default
+  llama serve --fim-qwen-1.5b-default
   ```
 
 <details>
   <summary>CPU-only configs</summary>
 
-These are `llama-server` settings for CPU-only hardware. Note that the quality will be significantly lower:
+These are `llama serve` settings for CPU-only hardware. Note that the quality will be significantly lower:
 
 ```bash
-llama-server \
+llama serve \
     -hf ggml-org/Qwen2.5-Coder-1.5B-Q8_0-GGUF \
     --port 8012 -ub 512 -b 512 --ctx-size 0 --cache-reuse 256
 ```
 
 ```bash
-llama-server \
+llama serve \
     -hf ggml-org/Qwen2.5-Coder-0.5B-Q8_0-GGUF \
     --port 8012 -ub 1024 -b 1024 --ctx-size 0 --cache-reuse 256
 ```
@@ -153,7 +161,7 @@ https://github.com/user-attachments/assets/cab99b93-4712-40b4-9c8d-cf86e98d4482
 The extension aims to be very simple and lightweight and at the same time to provide high-quality and performant local FIM completions, even on consumer-grade hardware.
 
 - The initial implementation was done by Ivaylo Gardev [@igardev](https://github.com/igardev) using the [llama.vim](https://github.com/ggml-org/llama.vim) plugin as a reference
-- Techincal description: https://github.com/ggerganov/llama.cpp/pull/9787
+- Technical description: https://github.com/ggerganov/llama.cpp/pull/9787
 
 ## Other IDEs
 

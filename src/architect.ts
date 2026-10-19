@@ -1,14 +1,14 @@
-// TODO
-// Идеи
-// - Използване на групи от агенти
-// - използване lSP и linters
 import * as vscode from 'vscode';
 import {Application} from "./application";
 import {LlamaWebviewProvider} from './llama-webview-provider'
 import { Utils } from './utils';
-import { Env, LlmModel } from './types';
+import { Agent, Env, LlmModel } from './types';
 import { env } from 'process';
-import { PERSISTENCE_KEYS, SETTING_NAME_FOR_LIST, UiView } from './constants';
+import * as fs from 'fs';
+import { PERSISTENCE_KEYS, PREDEFINED_LISTS_KEYS, SETTING_NAME_FOR_LIST, UiView } from './constants';
+import {LlamaChatModelProvider} from "./llama-chat-model-provider";
+import { LlamaAgent } from './llama-agent';
+import { PREDEFINED_LISTS } from './lists';
 
 export class Architect {
     private app: Application
@@ -26,28 +26,52 @@ export class Architect {
             this.app.menu.showHowToUseLlamaVscode();
             this.app.persistence.setGlobalValue("isFirstStart", false)
         }
+        const currentVersion = vscode.extensions.getExtension('ggml-org.llama-vscode')?.packageJSON?.version as string | undefined;
+        const storedVersion = this.app.persistence.getGlobalValue(PERSISTENCE_KEYS.EXTENSION_VERSION) as string | undefined;
+        if (currentVersion && storedVersion && currentVersion !== storedVersion) {
+            vscode.window.showInformationMessage(this.app.configuration.getUiText(`llama-vscode extension is updated.`) ?? "");
+        }
+        if (currentVersion) {
+            this.app.persistence.setGlobalValue(PERSISTENCE_KEYS.EXTENSION_VERSION, currentVersion);
+        }
         await this.installUpgradeLlamaCpp(isFirstStart);
-        if (this.app.configuration.env_start_last_used){
-            let lastEnv = this.app.persistence.getValue("selectedEnv")
-            if (lastEnv) {
-                if (this.app.configuration.env_start_last_used_confirm) {
-                    let [shouldSelect, dontAskAgain]  = await Utils.showYesYesdontaskNoDialog("You are about the select the env below. If there are local models inside, they will be downloaded (if not yet done) and llama.cpp server(s) will be started. \n\n" +
-                                                                        this.app.envService.getEnvDetailsAsString(lastEnv) +
-                                                                        "\n\n Do you want to continue?"
-                                                                        );
-                    if (shouldSelect) this.app.envService.selectStartEnv(lastEnv, false);
-                    if (dontAskAgain) this.app.configuration.updateConfigValue("env_start_last_used_confirm", false);
-                } else {
-                     this.app.envService.selectStartEnv(lastEnv, false);
-                }
-
-            }
+        try {
+            await this.restoreLastUsedEnv();
+        } catch (error) {
+            console.error("Failed to restore the last used env:", error);
         }
         let lastChat = this.app.persistence.getValue(PERSISTENCE_KEYS.SELECTED_CHAT)
         if (lastChat) this.app.chatService.selectUpdateChat(lastChat)
         let lastAgent = this.app.persistence.getValue(PERSISTENCE_KEYS.SELECTED_AGENT)
-        if (lastAgent) this.app.agentService.selectAgent(lastAgent)
+        if (lastAgent && (lastAgent as Agent).name) this.app.agentService.selectAgent(lastAgent, false)
+        else if (!this.app.getAgent()?.name) {
+            // set default agent if no last agent is set
+            const predefinedAgents = (PREDEFINED_LISTS.get(PREDEFINED_LISTS_KEYS.AGENTS) as Agent[])
+            const defaultAgent = predefinedAgents.find((agent) => agent.name === "default");
+            if (defaultAgent) this.app.agentService.selectAgent(defaultAgent, false)
+        }
         this.app.tools.init()
+        // Start the periodic agent command scheduler. It picks up all user
+        // commands with executePeriodically = true.
+        this.app.agentCommandScheduler.start();
+    }
+
+    private restoreLastUsedEnv = async (): Promise<void> => {
+        if (!this.app.configuration.env_start_last_used) return;
+
+        const lastEnv = this.app.envService.getPersistedEnvForAutoStart();
+        if (!lastEnv) return;
+
+        if (this.app.configuration.env_start_last_used_confirm) {
+            const [shouldSelect, dontAskAgain] = await this.app.dialogs.showYesYesdontaskNoDialog("You are about to select the env below. If there are local models inside, they will be downloaded (if not yet done) and llama.cpp server(s) will be started. \n\n" +
+                this.app.envService.getEnvDetailsAsString(lastEnv) +
+                "\n\n Do you want to continue?"
+            );
+            if (!shouldSelect) return;
+            if (dontAskAgain) await this.app.configuration.updateEnvStartLastUsedConfirm(false);
+        }
+
+        await this.app.envService.selectStartEnv(lastEnv, false, "restoration");
     }
 
     setOnSaveDeleteFileForDb = (context: vscode.ExtensionContext) => {
@@ -67,10 +91,19 @@ export class Architect {
         let configurationChangeDisp = vscode.workspace.onDidChangeConfiguration((event) => {
             const config = vscode.workspace.getConfiguration("llama-vscode");
             this.app.configuration.updateOnEvent(event, config);
-            if (this.app.configuration.isRagConfigChanged(event)) this.init();
+            if (this.app.configuration.isRagConfigChanged(event)){
+                this.app.llamaWebviewProvider.updateSettingsInView();
+                this.indexWorspaceFiles();
+            }
             if (this.app.configuration.isToolChanged(event)) this.app.tools.init();
             if (this.app.configuration.isEnvViewSettingChanged(event)) this.app.llamaWebviewProvider.updateLlamaView();
-            vscode.window.showInformationMessage(this.app.configuration.getUiText(`llama-vscode extension is updated.`)??"");
+            if (this.app.configuration.isTelegramBotConfigChanged(event)){
+                if (this.app.configuration.telegram_bot_enabled) this.app.telegramBot.createBot(this.app.configuration.telegram_api_token);
+                else this.app.telegramBot.closeBot();
+            }
+            if (this.app.configuration.isCompletionsEnabledConfigChanged(event)) this.app.statusbar.updateStatusBarText();
+            if (this.app.configuration.isAgentReminderSettingChanged(event)) this.app.agentReminder.initReminders();
+            if (event.affectsConfiguration("llama-vscode.agent_commands")) this.app.agentCommandScheduler.reschedule();
         });
         context.subscriptions.push(configurationChangeDisp);
     }
@@ -97,6 +130,36 @@ export class Architect {
             }
         });
         context.subscriptions.push(changeActiveTextEditorDisp)
+    }
+
+    registerCommandSelectNextSuggestion = (context: vscode.ExtensionContext) => {
+        const selectNextSuggestionCommand = vscode.commands.registerCommand(
+            'extension.selectNextSuggestion',
+            async () => {
+                const editor = vscode.window.activeTextEditor;
+                if (!editor) {
+                    return;
+                }
+                await vscode.commands.executeCommand('editor.action.inlineSuggest.showNext');
+                await this.app.completion.increaseSuggestionIndex();
+            }
+        );
+        context.subscriptions.push(selectNextSuggestionCommand);
+    }
+
+    registerCommandSelectPreviousSuggestion = (context: vscode.ExtensionContext) => {
+        const selectPreviousSuggestionCommand = vscode.commands.registerCommand(
+            'extension.selectPreviousSuggestion',
+            async () => {
+                const editor = vscode.window.activeTextEditor;
+                if (!editor) {
+                    return;
+                }
+                await vscode.commands.executeCommand('editor.action.inlineSuggest.showPrevious');
+                await this.app.completion.decreaseSuggestionIndex();
+            }
+        );
+        context.subscriptions.push(selectPreviousSuggestionCommand);
     }
 
     registerCommandAcceptFirstLine = (context: vscode.ExtensionContext) => {
@@ -148,6 +211,16 @@ export class Architect {
         context.subscriptions.push(rungBufferUpdateDisposable);
     }
 
+    setPeriodicModelsHealthUpdate = (context: vscode.ExtensionContext) => {
+        const modelsHealthIntervalId = setInterval(this.app.modelService.periodicModelHealthUpdate, this.app.configuration.health_check_interval_s * 1000);
+        const modelsHealthUpdateDisposable = {
+            dispose: () => {
+                clearInterval(modelsHealthIntervalId);
+            }
+        };
+        context.subscriptions.push(modelsHealthUpdateDisposable);
+    }
+
     setOnSaveFile = (context: vscode.ExtensionContext) => {
         const onSaveDocDisposable = vscode.workspace.onDidSaveTextDocument(this.app.extraContext.handleDocumentSave);
         context.subscriptions.push(onSaveDocDisposable);
@@ -162,6 +235,24 @@ export class Architect {
                 });
             })
         );
+    }
+
+    registerLlavaVscodeModelProvider = (context: vscode.ExtensionContext) => {
+        // Register the llama.vscode language model chat provider for GitHub Copilot Chat
+        
+        context.subscriptions.push(vscode.lm.registerLanguageModelChatProvider(
+            'llama-vscode',
+            this.app.llamaChatModelProvider
+        ));
+        context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event) => {
+            if (event.affectsConfiguration('llama-vscode.endpoint_chat')
+                || event.affectsConfiguration('llama-vscode.endpoint_tools')
+                || event.affectsConfiguration('llama-vscode.ai_api_version')
+                || event.affectsConfiguration('llama-vscode.lm_max_input_tokens')
+                || event.affectsConfiguration('llama-vscode.lm_max_output_tokens')) {
+                this.app.llamaChatModelProvider.notifyModelsChanged();
+            }
+        }));
     }
 
     registerGenarateCommitMsg = (context: vscode.ExtensionContext) => {
@@ -317,14 +408,15 @@ export class Architect {
         context.subscriptions.push(triggerAskAiDisposable);
     }
 
-    registerCommandAskAiWithTools = (context: vscode.ExtensionContext) => {
-        const triggerAskAiDisposable = vscode.commands.registerCommand('extension.askAiWithTools', async () => {
-            if (!vscode.window.activeTextEditor) {
+    registerCommandSendPromptToAgent = (context: vscode.ExtensionContext) => {
+        const triggerAskAiDisposable = vscode.commands.registerCommand('extension.sendPromptToAgent', async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor) {
                 vscode.window.showErrorMessage('No active editor!');
                 return;
             }
 
-            this.app.askAi.showChatWithTools(context);
+            await this.app.askAi.sendPromptToAgent(editor);
         });
         context.subscriptions.push(triggerAskAiDisposable);
     }
@@ -343,12 +435,7 @@ export class Architect {
 
     registerCommandEditAllSearchFiles = (context: vscode.ExtensionContext) => {
         const editAllSearchFilesDisposable = vscode.commands.registerCommand('extension.editAllSearchFiles', async () => {
-            const editor = vscode.window.activeTextEditor;
-            if (!editor) {
-                vscode.window.showErrorMessage('No active editor!');
-                return;
-            }
-            await this.app.fileEditor.showEditAllSearchFilesPrompt(editor);
+            await this.app.fileEditor.showEditAllSearchFilesPrompt();
         });
         context.subscriptions.push(editAllSearchFilesDisposable);
     }
@@ -375,6 +462,78 @@ export class Architect {
                 this.app.llamaAgent.stopAgent();
             })
         );
+    }
+
+    // Opens a changed file from the agent session summary in the editor.
+    // Triggered by clicking a "Files changes" link in the AgentView markdown.
+    // The path may be absolute or relative to the workspace root.
+    registerCommandOpenChangedFile = (context: vscode.ExtensionContext) => {
+        context.subscriptions.push(
+            vscode.commands.registerCommand('llama-vscode.openChangedFile', async (args: any) => {
+                if (!args || !args.filePath) return;
+                const fileLongName = args.filePath;
+                const absolutePath = Utils.getAbsolutFilePath(fileLongName.trim());
+                if (!absolutePath) {
+                    vscode.window.showErrorMessage(`Cannot open file: no workspace folder is open (${fileLongName})`);
+                    return;
+                }
+                if (!fs.existsSync(absolutePath)) {
+                    vscode.window.showErrorMessage(`Changed file does not exist: ${absolutePath}`);
+                    return;
+                }
+                const uri = vscode.Uri.file(absolutePath);
+                const document = await vscode.workspace.openTextDocument(uri);
+                await vscode.window.showTextDocument(document);
+            })
+        );
+    }
+
+    registerUriHandler = (context: vscode.ExtensionContext) => {
+        const uriHandler: vscode.UriHandler = {
+            handleUri: async (uri: vscode.Uri) => {
+                await this.handleUri(uri);
+            }
+        };
+        context.subscriptions.push(vscode.window.registerUriHandler(uriHandler));
+    }
+
+    private handleUri = async (uri: vscode.Uri) => {
+        const queryParams = new URLSearchParams(uri.query);
+        const project = queryParams.get('project');
+        if (project) {
+            await Utils.openProjectFolder(project);
+        }
+        const view = queryParams.get('view');
+        switch (view) {
+            case 'env':
+                this.app.llamaWebviewProvider.showEnvViewInUi();
+                break;
+            case 'agent':
+                const prompt = queryParams.get('prompt');
+                if (prompt) this.app.llamaWebviewProvider.showAgentViewInUi(prompt)
+                else this.app.llamaWebviewProvider.showAgentViewInUi();
+                break;
+            case 'edit-agent':
+                this.app.llamaWebviewProvider.showAgentEditorInUi();
+                break;
+            case 'menu':
+                this.app.menu.showMenu(this.app.extensionContext);
+                break;
+            case 'chat-with-ai':
+                this.app.askAi.showChatWithAi(false, this.app.extensionContext);
+                break;
+            case 'settings':
+                const filter = queryParams.get('filter');
+                let settingsFilter = 'llama-vscode'
+                if (filter) settingsFilter += " " + filter
+                vscode.commands.executeCommand('workbench.action.openSettings', settingsFilter);
+                break;
+            default:
+                // if unknown view or no view provided, show env view
+                this.app.llamaWebviewProvider.showEnvViewInUi();
+                break;
+        }
+        
     }
 
     registerWebviewProvider = (context: vscode.ExtensionContext) => {
@@ -445,11 +604,12 @@ export class Architect {
 
     private async installUpgradeLlamaCpp(isFirstStart: any) {
         if (!this.app.configuration.ask_install_llamacpp) return;
-        let result = await Utils.executeTerminalCommand("llama-server --version");
-        if (result.includes("command not found") || result.includes("is not recognized")) {
+        let { stdout, stderr }  = await this.app.llamaServer.executeCommandWithTerminalFeedback("llama serve --version");
+        stderr = stderr.toLowerCase();
+        if (stderr.includes("command not found") || stderr.includes("command failed") || stderr.includes("is not recognized")) {
             let questionInstall = "llama.cpp will be installed as it is requred by llama-vscode extension.";
             if (process.platform == 'win32') questionInstall += "\nVS Code will be restarted.";
-            let [shouldInstall, shouldStopAsking] = await Utils.showYesNoNodontAskDialog(questionInstall, "Confirm");
+            let [shouldInstall, shouldStopAsking] = await this.app.dialogs.showYesNoNodontAskDialog(questionInstall, "Confirm");
             if (shouldInstall) {
                 await this.app.menu.installLlamacpp();
                 this.app.persistence.setGlobalValue("last_llama_cpp", (new Date()).toISOString());
@@ -466,7 +626,7 @@ export class Architect {
             let lastUpgradeDateStr = this.app.persistence.getGlobalValue("last_llama_cpp");
             if (!lastUpgradeDateStr || Utils.isTimeToUpgrade(new Date(lastUpgradeDateStr), new Date(), this.app.configuration.ask_upgrade_llamacpp_hours)) {
                 let questionInstall = "Do you want to upgrade llama.cpp (used for running local models)? (recommended).";
-                let [shouldInstall, shouldStopAsking] = await Utils.showYesNoNodontAskDialog(questionInstall, "Confirm");
+                let [shouldInstall, shouldStopAsking] = await this.app.dialogs.showYesNoNodontAskDialog(questionInstall, "Confirm");
                 if (shouldInstall) {
                     await this.app.menu.installLlamacpp();
                     this.app.persistence.setGlobalValue("last_llama_cpp", (new Date()).toISOString());
