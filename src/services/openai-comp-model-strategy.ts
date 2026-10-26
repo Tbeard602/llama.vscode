@@ -6,23 +6,15 @@ import { Utils } from "../utils";
 import * as axios from "axios";
 import { OPENAI_COMP_PROVIDERS, OpenAiProvidersKeys, SETTING_TO_MODEL_TYPE } from "../constants";
 import { ServiceUtils } from "./service-utils";
-
-interface OpenAiCompModel {
-    name: string;
-    id: string;
-    description: string;
-    context_length: string;
-    pricing: {
-        completion: number;
-        prompt: number;
-    }
-}
+import { formatOpenAiCompModelItem, OpenAiCompModel } from "./openai-comp-model-item";
 
 export class OpenAiCompModelStrategy implements IAddStrategy {
     private app: Application;
+    private modelEndpointsKeyRequired: Set<string> = new Set();
 
     constructor(app: Application) {
         this.app = app;
+        this.modelEndpointsKeyRequired.add(OPENAI_COMP_PROVIDERS[OpenAiProvidersKeys.ApiRoute]);
     }
 
     add = async (details: ModelTypeDetails): Promise<void> => {
@@ -39,6 +31,7 @@ export class OpenAiCompModelStrategy implements IAddStrategy {
             //if custom - ask for endpoint
             let endpoint = selProvider.description??""
             let isKeyRequired = true;
+            if (endpoint == OPENAI_COMP_PROVIDERS[OpenAiProvidersKeys.LlamaApp]) isKeyRequired = false
             if (selProvider.label == OpenAiProvidersKeys.Custom){
                 endpoint = await vscode.window.showInputBox({
                     placeHolder: 'endpoint (URL to the API) of an OpenAI compatible provider',
@@ -50,33 +43,33 @@ export class OpenAiCompModelStrategy implements IAddStrategy {
                 vscode.window.showWarningMessage("Endpoint is not provided!")
                 return;
             }
-            const providerModels: QuickPickItem[] = [];
-            const models = await this.getModels(endpoint, isKeyRequired);
-            if (models.length == 0) {
-                vscode.window.showInformationMessage("No models are found.")
-                return
-            }
+            await this.addModleFromEndpoint(endpoint, isKeyRequired, selProvider.label, details);
+        }
+    }
+
+    addModleFromEndpoint = async (endpoint: string, isKeyRequired: boolean, providerName: string, details: ModelTypeDetails) => {
+        const providerModels: QuickPickItem[] = [];
+        const models = await this.getModels(endpoint, isKeyRequired);
+        let selModel: vscode.QuickPickItem | undefined;
+        let modelsAvailable = true;
+        if (models.length == 0) {
+            modelsAvailable = false;
+        } else {
             for (let mdl of models) {
-                providerModels.push({
-                    label: mdl.name,
-                    description: mdl.context_length + " context | $" + (mdl.pricing?.prompt*1000000).toFixed(2) + "/M input tokens | $" + (mdl.pricing?.completion*1000000).toFixed(2) + "/M output tokens",
-                    detail: mdl.description + " | "+ mdl.id,
-                });
+                providerModels.push(formatOpenAiCompModelItem(mdl));
             }
-            const selModel = await vscode.window.showQuickPick(providerModels);
-            if (!selModel){
-                vscode.window.showWarningMessage("No model is selected!")
-                return;
-            }
-            let aiModel = selModel.detail
-            if(aiModel) aiModel = aiModel.split("|").slice(-1)[0]?.trim()
-            let provider = selProvider.label
-            if (provider.endsWith("...")) provider = provider.slice(0,-3)
+            selModel = await vscode.window.showQuickPick(providerModels);
+        }
+        if (modelsAvailable && selModel) {
+            let aiModel = selModel.detail;
+            if (aiModel) aiModel = aiModel.split("|").slice(-1)[0]?.trim();
+            let provider = providerName;
+            if (provider.endsWith("...")) provider = provider.slice(0, -3);
             let newModel: LlmModel = {
                 name: provider + ": " + selModel.label,
                 localStartCommand: "",
                 endpoint: endpoint,
-                aiModel: aiModel == "undefined" ? "" : aiModel??"",
+                aiModel: aiModel == "undefined" ? "" : aiModel ?? "",
                 isKeyRequired: isKeyRequired
             };
 
@@ -88,6 +81,9 @@ export class OpenAiCompModelStrategy implements IAddStrategy {
             if (shouldAddModel) {
                 await ServiceUtils.addPersistModel(newModel, details, this.app);
             }
+        } else {
+            if (!modelsAvailable) vscode.window.showInformationMessage("No models are found.");
+            else vscode.window.showWarningMessage("No model is selected!");
         }
     }
 
@@ -99,7 +95,20 @@ export class OpenAiCompModelStrategy implements IAddStrategy {
 
         if (isKeyRequired) {
             // We get the saved key for this specific endpoint
-            const apiKey = this.app.persistence.getApiKey(endpoint);
+            let apiKey = this.app.persistence.getApiKey(endpoint);
+            if (!apiKey && this.modelEndpointsKeyRequired.has(endpoint)) {
+                let result = await vscode.window.showInputBox({
+                    placeHolder: 'Enter your api key for ' + endpoint,
+                    prompt: 'your api key for ' + endpoint,
+                    value: ''
+                });
+                apiKey = result ? result.trim() : '';
+                apiKey = result ? result.trim() : '';
+                if (apiKey) {
+                    this.app.persistence.setApiKey(endpoint ?? "", apiKey);
+                    vscode.window.showInformationMessage("Your API key for " + endpoint + " was saved.")
+                }
+            }
             if (apiKey) {
                 requestConfig = {
                     headers: {
