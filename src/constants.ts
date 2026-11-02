@@ -13,6 +13,19 @@ export enum UiView {
   AiRunner = 'airunner'
 }
 
+export enum ToolsPermissionsMode {
+  AllowAll = "AllowAll",
+  AutoAskIfUnsure = "AutoAskIfUnsure",
+  AutoDenyIfUnsure = "AutoDenyIfUnsure",
+  Ask = "Ask"
+}
+
+export enum LlmJudgeCommandSafe {
+  Yes = "yes",
+  No = "no",
+  Unsure = "unsure"
+}
+
 export enum Action {
   Select = 'select',
   AddLocal = 'addLocal',
@@ -151,8 +164,10 @@ export const UI_TEXT_KEYS = {
   enabled: "enabled",
   disabled: "disabled",
   rag: "RAG",
-  turnOffRAG: "Turn off RAG related features like tool search_source",
-  turnOnRAG: "Turn on RAG related features like tool search_source",
+  // These English strings are looked up in translations.ts, which already has
+  // rows for them - do not reword without adding a translation row.
+  turnOffRAG: "Turn off RAG related features like Chat with AI with project context",
+  turnOnRAG: "Turn on RAG related features like Chat with AI with project context",
 
   // UI actions
   showLlamaAgent: "Show Llama Agent",
@@ -383,7 +398,9 @@ export enum OpenAiProvidersKeys {
   LlamaApp = 'Llama app...',
   OrcaRouter = 'OrcaRouter...',
   ApiRoute = 'API Route...',
+  CloudGPU = 'CloudGPU...',
   AtlasCloud = 'Atlas Cloud...',
+  Runcrate = 'Runcrate...',
   Custom = 'Custom...'
 }
 // The "Llama app" provider is available only on Windows and macOS.
@@ -395,6 +412,8 @@ export const OPENAI_COMP_PROVIDERS: Record<OpenAiProvidersKeys, string> = {
   [OpenAiProvidersKeys.OrcaRouter]: "https://api.orcarouter.ai",
   [OpenAiProvidersKeys.AtlasCloud]: "https://api.atlascloud.ai",
   [OpenAiProvidersKeys.ApiRoute]: "https://global.api-route.com",
+  [OpenAiProvidersKeys.CloudGPU]: "https://cloudgpu.app",
+  [OpenAiProvidersKeys.Runcrate]: "https://api.runcrate.ai",
   [OpenAiProvidersKeys.Custom]: ""
 } as Record<OpenAiProvidersKeys, string>
 

@@ -39,6 +39,9 @@ import { DslCommands } from "./dsl-commands"
 import { AgentReminder } from "./agent-reminder";
 import { Hooks } from "./hooks";
 import { WebBrowser } from "./web-browser";
+import { WorkspaceTextSearch, createWorkspaceTextSearchHost } from "./services/workspace-text-search";
+import { WorkspaceIgnoreFileCache, createWorkspaceFileCatalogHost } from "./services/workspace-file-catalog";
+import { WorkspaceSourceSearch } from "./services/workspace-source-search";
 
 export class Application {
     public static readonly emptyModel = {name: ""};
@@ -82,6 +85,8 @@ export class Application {
     public agentReminder: AgentReminder
     public hooks: Hooks
     public webBrowser: WebBrowser
+    public workspaceTextSearch: WorkspaceTextSearch
+    public workspaceSourceSearch: WorkspaceSourceSearch
 
     private selectedComplModel: LlmModel = Application.emptyModel
     private selectedChatModel: LlmModel = Application.emptyModel
@@ -111,6 +116,21 @@ export class Application {
         this.prompts = new Prompts(this)
         this.git = new Git(this)
         this.webBrowser = new WebBrowser(this)
+        // RAG-free full-text search for the agent's regex_search tool. It owns
+        // its own ignore-file cache: each cache costs at most one discovery per
+        // TTL window, so sharing it with the file picker is not worth the
+        // extra wiring.
+        this.workspaceTextSearch = new WorkspaceTextSearch(
+            new WorkspaceIgnoreFileCache(createWorkspaceFileCatalogHost()),
+            createWorkspaceTextSearchHost()
+        )
+        // RAG-free fallback for the agent's search_source tool: no index, no
+        // embeddings, bounded scan. One ignore cache per service is the same
+        // accepted trade-off as above (at most one extra discovery per TTL).
+        this.workspaceSourceSearch = new WorkspaceSourceSearch(
+            new WorkspaceIgnoreFileCache(createWorkspaceFileCatalogHost()),
+            createWorkspaceTextSearchHost()
+        )
         this.tools = new Tools(this)
         this.llamaAgent = new LlamaAgent(this)
         this.llamaWebviewProvider = new LlamaWebviewProvider(context.extensionUri, this, context)

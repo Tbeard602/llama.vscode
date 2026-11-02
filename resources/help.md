@@ -319,6 +319,28 @@ Settings:
 <img width="580" height="779" alt="image" src="https://github.com/user-attachments/assets/bb29e0c8-85b4-4e7a-a3d9-f2d9a1679d3d" />
 
 
+## Version 0.0.76 is released (02.11.2026)
+### What is new
+- Update search_source tool to continue working if RAG indexing is off
+- RAG indexing is now off by default as all agent tools could be used without RAG indexing.
+- Add OpenAI compatible providers - CloudGPU and  Runcrate
+
+
+## Version 0.0.75 is released (01.11.2026)
+### What is new
+- regex_search tool is changed to be independent from RAG search.
+- Refactor  tool run_terminal_command
+- For Windows the procedure for installing lama.cpp is changed. If option llama app is selected - the web page llama.app is opened instead of running shell script.
+- Tools permissoins modes introduced - AllowAll, AutoAskIfUnsure, AutoDenyIfUnsure, Ask
+
+## Version 0.0.74 is released (28.10.2026)
+### What is new
+- Send prompt in sesson (between tool calls) fixed
+- Search files in agent chat is now independent from the RAG indexing
+- Auto-start default tools model for agent
+
+
+
 ## Version 0.0.73 is released (26.10.2026)
 ### What is new
 - Kimi K3.1 Pro and Kimi K3.1 Pro Highspeed added as predefined models for providers - moonshotai (supports tools on demand), openrouter, orcarouter
@@ -710,14 +732,24 @@ For more details - select 'View Documentation' from llama-vscode menu
 
 ### Requred servers
 - Tools server
-- Chat server (if search_source tool is used)
-- Embeddings server (if search_source tool is used)
+- Embeddings server (optional - enables embeddings filtering of tool search_source results)
 
 ### Overview
 Llama agent uses AI and tools to answer questions, change and add files and do everythin eles, which is provided by the tools.  
 Llama agent is still in development, but could produce some results with intlligent models with tools support.  
 Llama agent doesn't ask for permission for each change of a file. Use VS Code's Source Control view or github to review and rollback (if needed) the changes.  
 Llama agent asks for permission for executing terminal command. However, if the setting Tool_permit_some_terminal_commands is enabled, it will stop asking for permissions for some commands, which are considered safe.
+.
+
+A terminal command is considered safe only if EVERY part of it is read-only. Chained commands (`ls; rm -rf .`, `ls && git status`, `pwd | grep x`), output redirection (`>`, `2>&1`, heredocs), command substitution (`$(...)`, backticks), environment assignments (`FOO=bar ls`) and writes hidden in arguments (`find . -delete`, `sort -o out.txt`, `git branch -D`, `git config user.name`) are always treated as modifying, so they always ask for permission. Interpreters (`node`, `python`, `npm`, ...) are treated as safe only for version queries like `node --version`. The reason for the verdict is shown in the permission dialog.
+
+The tool run_terminal_command runs the command in a non-interactive shell (PowerShell on Windows) in the project root folder, without a TTY and without stdin. Interactive commands (git commit without -m, nano, less, npm create) will hang or fail - avoid them. The output is returned with its exit code and labelled stdout/stderr; it is cut in the middle when it is too long, so the head and the tail of the output are kept. A command that runs longer than tool_run_terminal_command_timeout seconds is killed, and the Stop button stops it too. Commands are never echoed into the Command Terminal - the command runs in a child process and its output is shown in the llama-vscode output channel.
+
+Settings:
+- tool_run_terminal_command_enabled - controls if the tool is enabled
+- tool_run_terminal_command_timeout - how long (in seconds) a command may run before it is killed. Default 300 (minimum 5, maximum 3600)
+- tool_run_terminal_command_max_chars - max number of chars of the output returned to the agent. Default 5000, limited by MAX_CHARS_TOOL_RETURN
+- tool_permit_some_terminal_commands - do not ask for permission for commands, which are considered safe
 
 ### How to use it 
 The best wey to prepare the environment for the agent is by selecting an Env (group of models). So, below is the standard workflow:
@@ -726,7 +758,7 @@ The best wey to prepare the environment for the agent is by selecting an Env (gr
 3. Write your request and send it with Enter or the "Send" button.  
 4. During the agent loop you could also send prompt - enter a prompt and press Enter or click the second "Send" button (on the right side)
 
-You could also use the agent only with tools model selected. In this case the tool search_source will use tools instead of chat server and filtering with embeddins server will be skipped.
+You could also use the agent only with tools model selected. In this case the tool search_source will use tools instead of chat server and filtering with embeddins server will be skipped. Tool search_source works without RAG indexing and without an embeddings server - it then searches the project files directly and ranks the fragments with BM25.
 
 Optional
 - You could add files to the context with the @ button or just by entering "@". 
@@ -1148,7 +1180,30 @@ Settings:
 
 [Screencast from 2026-01-05 15-05-00.webm](https://github.com/user-attachments/assets/41fa92f8-88db-4079-9574-486fb4286c79)
 
-## Rules
+## Permissions Modes
+
+### Overview
+Permissions modes control whether and how the agent's tool calls are executed. There are four modes:
+
+- **AllowAll**: All tool calls are allowed.
+- **AutoAskIfUnsure**: The LLM judges whether a command is safe and asks the user when unsure.
+- **AutoDenyIfUnsure**: The LLM judges whether a command is safe and denies the call when unsure.
+- **Ask**: The user is asked for confirmation.
+
+### How It Works
+The default mode is `Ask`. You can change the mode in two ways:
+
+- Change the `tools_permissions_mode` setting.
+- In the agent chat view, click the permissions mode button at the bottom-left, next to the agent selector button.
+
+### Settings
+
+`tools_permissions_mode`:
+
+- **AllowAll**: Allows all commands to be executed by the AI. Also known as YOLO mode. Use this mode with caution.
+- **AutoAskIfUnsure**: Obviously safe commands (read-only, inside the project or the auto memory folder) run without asking. Obviously dangerous commands (privilege escalation, recursive/forced deletes, credentials and profile paths, system directories, downloads piped into a shell) are denied. Only commands that fall between these categories are judged by the LLM: allow if safe, deny if unsafe, and ask the user if unsure. Uses the chat model (if available) or the tools model.
+- **AutoDenyIfUnsure**: Obviously safe commands (read-only, inside the project or the auto memory folder) run without asking. Obviously dangerous commands (privilege escalation, recursive/forced deletes, credentials and profile paths, system directories, downloads piped into a shell) are denied. Only commands that fall between these categories are judged by the LLM; if it is unsure or cannot answer, the command is denied. Uses the chat model (if available) or the tools model.
+- **Ask** (default): The user is asked for permission. In this mode, some commands can be executed automatically without asking if any of the following settings are set to `true`: `tool_permit_some_terminal_commands`, `tool_permit_file_changes`, `tool_permit_file_deletes`.## Rules
 
 ### What are rules
 Rules are additional user instructions that are added to the system prompt when an agent request is sent to the AI model. They are stored in a file, created by the user in a plain text or markdown format.
@@ -1495,7 +1550,7 @@ The agent "Agent creator" makes it easier to create agents (which could be used 
 
 ### Requred servers
 - Tools server
-- Embeddings server (if search_source tool is used)
+- Embeddings server (optional - enables embeddings filtering of tool search_source results)
 
 ### Overview
 You can program from your phone with llama-vscode and Telegram. Part of the agent functionality of llama-vscode could be used from Telegram (i.e. from phone) via a Telegram Bot.  The user creates a Telegram Bot and sets it's token in setting telegram_api_token. After that all messages to this bot are forwarded to the agent in llama-vscode. The AI agent answers are sent to the user in Telegram. For security reasons, only users from a white list (setting telegram_bot_users) are allowed to use the bot. The bot answers, for example to /help command, are provided in the language, which is set in setting "Language". The user could also confirm permission requests for terminal commands, changing and deleting files from Telegram.

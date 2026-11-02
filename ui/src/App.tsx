@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { AgentView, AIRunnerView, AddEnvView, AgentEditor, AgentCommandEditor } from './components';
 import { vscode } from './types/vscode';
+import { PermissionsModeInfo, parsePermissionsModes } from './utils/permissionsMode';
 
 interface AppProps { }
 
@@ -24,6 +25,17 @@ const App: React.FC<AppProps> = () => {
   );
   const [currentToolsModel, setCurrentToolsModel] = useState<string>(
     initialState.currentToolsModel || noModelSelected
+  );
+  // A configured `endpoint_tools` makes the agent usable without a selected
+  // model, so the view must not claim there is no tools model in that case.
+  const [hasToolsEndpoint, setHasToolsEndpoint] = useState<boolean>(
+    Boolean(initialState.hasToolsEndpoint)
+  );
+  // True while the extension is starting the default tools model. Shown as
+  // progress instead of the empty state, which would flash for a few seconds.
+  const [startingDefaultToolsModel, setStartingDefaultToolsModel] = useState<boolean>(false);
+  const [defaultToolsModel, setDefaultToolsModel] = useState<string>(
+    initialState.defaultToolsModel || ''
   );
   const [currentAgentModel, setCurrentAgentModel] = useState<string>(
     initialState.currentAgentModel || noModelSelected
@@ -57,6 +69,15 @@ const App: React.FC<AppProps> = () => {
   const [llamaAppSupported, setLlamaAppSupported] = useState<boolean>(
     Boolean(initialState.llamaAppSupported)
   );
+  // Current `tools_permissions_mode`. Kept in the webview state so a reload of
+  // the panel does not show the "ask" default for a moment when the user
+  // actually runs in another mode.
+  const [permissionsMode, setPermissionsMode] = useState<string>(
+    initialState.permissionsMode || 'Ask'
+  );
+  // Labels / explanations of the modes, sent by the extension so the composer
+  // menu uses the same wording as package.json.
+  const [permissionsModes, setPermissionsModes] = useState<PermissionsModeInfo[] | undefined>(undefined);
   const [agentEditTools, setAgentEditTools] = useState<Map<string, string>>(new Map());
   const [agentEditDetails, setAgentEditDetails] = useState<{name:string, description:string, systemInstruction:string, toolsModel: string, subagentEnabled: boolean}>({name:"", description:"", systemInstruction:"", toolsModel:"", subagentEnabled: false});
 
@@ -74,9 +95,14 @@ const App: React.FC<AppProps> = () => {
       currentEnv: currentEnv,
       currentState,
       llamaAppSupported,
+      permissionsMode,
+      // Kept so a webview reload does not show the "no tools model" empty state
+      // for a page that is usable through endpoint_tools or a pending default.
+      hasToolsEndpoint,
+      defaultToolsModel,
       view
     });
-  }, [displayText, inputText, currentToolsModel, currentChatModel, currentEmbeddingsModel, currentCompletionModel, currentAgentModel, currentAgent, currentEnv, currentState, llamaAppSupported, view]);
+  }, [displayText, inputText, currentToolsModel, currentChatModel, currentEmbeddingsModel, currentCompletionModel, currentAgentModel, currentAgent, currentEnv, currentState, llamaAppSupported, hasToolsEndpoint, defaultToolsModel, view, permissionsMode]);
 
   useEffect(() => {
     // Listen for messages from the extension
@@ -85,6 +111,9 @@ const App: React.FC<AppProps> = () => {
       switch (message.command) {
         case 'updateToolsModel':
           setCurrentToolsModel(message.model || noModelSelected);
+          setHasToolsEndpoint(Boolean(message.toolsEndpoint));
+          setStartingDefaultToolsModel(Boolean(message.startingDefault));
+          setDefaultToolsModel(typeof message.defaultModel === 'string' ? message.defaultModel : '');
           break;
         case 'updateTmpAgentModel':
           setCurrentAgentModel(message.model || "");
@@ -116,6 +145,15 @@ const App: React.FC<AppProps> = () => {
         case 'updateHostInfo':
           setLlamaAppSupported(Boolean(message.llamaAppSupported));
           break;
+        case 'updatePermissionsMode': {
+          // The extension is the source of truth: it posts the current value and
+          // the list whenever the setting changes (including changes made in the
+          // settings UI), so an unknown / missing value keeps the last known one.
+          if (typeof message.mode === 'string' && message.mode) setPermissionsMode(message.mode);
+          const modes = parsePermissionsModes(message.modes);
+          if (modes.length > 0) setPermissionsModes(modes);
+          break;
+        }
         case 'updateAgentEdit':
           setAgentEditDetails({name: message.name, description: message.description, systemInstruction: message.systemInstruction, toolsModel: message.toolsModel,subagentEnabled: message.subagentEnabled});
           break;
@@ -289,10 +327,15 @@ const App: React.FC<AppProps> = () => {
             inputText={inputText}
             setInputText={setInputText}
             currentToolsModel={currentToolsModel}
+            hasToolsEndpoint={hasToolsEndpoint}
+            startingDefaultToolsModel={startingDefaultToolsModel}
+            defaultToolsModel={defaultToolsModel}
             currentAgent={currentAgent}
             currentState={currentState}
             setCurrentState={setCurrentState}
             llamaAppSupported={llamaAppSupported}
+            permissionsMode={permissionsMode}
+            permissionsModes={permissionsModes}
             contextFiles={contextFiles}
             setContextFiles={setContextFiles}
             imagePath={imagePath}

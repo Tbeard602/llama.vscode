@@ -1,6 +1,8 @@
 import React, { useLayoutEffect, useRef } from 'react';
 import ContextChips from './ContextChips';
+import PermissionsModeButton from './PermissionsModeButton';
 import { isTriggerPosition, PickerTrigger, replaceRange } from '../../utils/pickerItems';
+import { DEFAULT_PERMISSIONS_MODES, PermissionsMode, PermissionsModeInfo } from '../../utils/permissionsMode';
 import { ImageIcon, QueueIcon, SendIcon, StopIcon, WrenchIcon } from '../common/Icons';
 
 interface ComposerProps {
@@ -19,6 +21,11 @@ interface ComposerProps {
   // Same actions as the "..." menu entries "Select Agent..." / "Select Tools Model..."
   onSelectAgent: () => void;
   onSelectToolsModel: () => void;
+  // Current value of the `tools_permissions_mode` setting plus the modes the
+  // menu offers. Selecting one writes the setting (extension side).
+  permissionsMode: string;
+  permissionsModes?: PermissionsModeInfo[];
+  onSelectPermissionsMode: (mode: PermissionsMode) => void;
   isWorking: boolean;
   // A stop was requested and the run has not unwound yet.
   stopRequested: boolean;
@@ -47,6 +54,9 @@ const Composer: React.FC<ComposerProps> = ({
   onConfigureTools,
   onSelectAgent,
   onSelectToolsModel,
+  permissionsMode,
+  permissionsModes = DEFAULT_PERMISSIONS_MODES,
+  onSelectPermissionsMode,
   isWorking,
   stopRequested,
   currentAgent,
@@ -191,7 +201,7 @@ const Composer: React.FC<ComposerProps> = ({
                 className="modern-btn secondary send-in-session"
                 onClick={onSendInSession}
                 disabled={!hasText || stopRequested}
-                title="Send in the current session, at the next tool-call boundary (Ctrl/Cmd+Enter)"
+                title="Queue a message for the running session - the agent gets it at the next tool-call boundary (Ctrl/Cmd+Enter)"
               >
                 <QueueIcon />
                 <span>Send to session</span>
@@ -229,8 +239,16 @@ const Composer: React.FC<ComposerProps> = ({
       </div>
 
       <div className="composer-footer">
-        <span className="composer-hint">Enter to send · Shift+Enter for a new line · @ files · / commands</span>
+        <span className="composer-hint">Enter to send · Shift+Enter for a new line · Ctrl/Cmd+Enter queues for the running session · @ files · / commands</span>
         <span className="composer-context">
+          {/* Safety state first: it is the one footer item that changes how the
+              agent behaves, so it must be visible without looking for it. */}
+          <PermissionsModeButton
+            mode={permissionsMode}
+            modes={permissionsModes}
+            onSelect={onSelectPermissionsMode}
+          />
+          <span className="context-sep" aria-hidden="true">·</span>
           <button
             type="button"
             className="context-link"
