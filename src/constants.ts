@@ -422,6 +422,8 @@ export enum OpenAiProvidersKeys {
   Runcrate = 'Runcrate...',
   LlmBuzz = 'llm.buzz...',
   Cheapaimodel = 'cheapaimodel...',
+  UberLLM = 'UberLLM...',
+  StandardCompute = 'Standard Compute...',
   Custom = 'Custom...'
 }
 // The "Llama app" provider is available only on Windows and macOS.
@@ -437,6 +439,8 @@ export const OPENAI_COMP_PROVIDERS: Record<OpenAiProvidersKeys, string> = {
   [OpenAiProvidersKeys.Runcrate]: "https://api.runcrate.ai",
   [OpenAiProvidersKeys.LlmBuzz]: "https://api.llm.buzz/api",
   [OpenAiProvidersKeys.Cheapaimodel]: "https://api.cheapaimodel.ai",
+  [OpenAiProvidersKeys.UberLLM]: "https://api.uberllm.dev",
+  [OpenAiProvidersKeys.StandardCompute]: "https://api.stdcmpt.com",
   [OpenAiProvidersKeys.Custom]: ""
 } as Record<OpenAiProvidersKeys, string>
 
